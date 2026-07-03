@@ -41,7 +41,19 @@ function buildDeveloperLogFileName(payload = {}) {
 }
 
 function createNoopDeveloperLogger() {
-  return { enabled: false, filePath: '', logId: '', write() {} };
+  const noop = () => {};
+  return {
+    enabled: false,
+    filePath: '',
+    logId: '',
+    write: noop,
+    log: noop,
+    warn: noop,
+    error: noop,
+    info: noop,
+    debug: noop,
+    trace: noop,
+  };
 }
 
 function normalizeDeveloperConfig(config) {
@@ -91,7 +103,19 @@ function createDeveloperLogger({ app, config, moduleName, name, meta } = {}) {
   }
 
   write('logger.created', { name: logName, meta: meta || {} });
-  return { enabled: true, filePath, logId, write };
+  const logger = {
+    enabled: true,
+    filePath,
+    logId,
+    write,
+    log: (event, payload) => write(event, payload),
+    info: (event, payload) => write(event, { ...(payload || {}), level: 'info' }),
+    warn: (event, payload) => write(event, { ...(payload || {}), level: 'warn' }),
+    error: (event, payload) => write(event, { ...(payload || {}), level: 'error' }),
+    debug: (event, payload) => write(event, { ...(payload || {}), level: 'debug' }),
+    trace: (event, payload) => write(event, { ...(payload || {}), level: 'trace' }),
+  };
+  return logger;
 }
 
 function textHash(value) {

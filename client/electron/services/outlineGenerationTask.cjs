@@ -133,6 +133,167 @@ function loadOutlineKnowledgeItems(knowledgeBaseService, documentIds, log) {
   }
 }
 
+const RAG_REFERENCE_TOP_K = 6;
+const RAG_REFERENCE_MAX_CONTENT_CHARS = 480;
+const RAG_REFERENCE_QUERY_MAX_CHARS = 1600;
+
+function buildRagQuery({ overview, requirements, existingOutline }) {
+  const sections = [];
+  if (overview) sections.push(`项目概述：${String(overview).trim()}`);
+  if (requirements) sections.push(`技术要求：${String(requirements).trim()}`);
+  if (existingOutline?.outline?.length) {
+    const titles = existingOutline.outline
+      .slice(0, 12)
+      .map((node) => node?.title)
+      .filter(Boolean)
+      .join('；');
+    if (titles) sections.push(`当前一级目录：${titles}`);
+  }
+  const query = sections.join('\n').slice(0, RAG_REFERENCE_QUERY_MAX_CHARS).trim();
+  return query || '项目相关历史资料';
+}
+
+function summarizeRagChunk(content) {
+  return String(content || '').replace(/\s+/g, ' ').trim().slice(0, RAG_REFERENCE_MAX_CONTENT_CHARS);
+}
+
+function headingToTitle(headingPath, fallback) {
+  if (Array.isArray(headingPath) && headingPath.length) {
+    return headingPath.filter(Boolean).join(' > ');
+  }
+  return fallback || 'RAG 检索片段';
+}
+
+function dedupeRagReferences(items) {
+  const seen = new Set();
+  const out = [];
+  for (const item of items) {
+    const key = `${item.document_id || ''}::${item.chunk_id || item.id || ''}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(item);
+  }
+  return out;
+}
+
+async function loadOutlineRagReferences(knowledgeBaseService, documentIds, query, log, ragGroups = null) {
+  if (!documentIds.length) return [];
+  if (!knowledgeBaseService?.searchRag) {
+    log('RAG 服务未启用，跳过 RAG 检索。', 6);
+    return [];
+  }
+  // ragGroups: [{ documentIds: string[], topK: number, query: string, folderName?: string }]
+  const groups = (ragGroups && ragGroups.length)
+    ? ragGroups
+    : [{ documentIds, topK: RAG_REFERENCE_TOP_K, query }];
+  const allItems = [];
+  try {
+    for (const group of groups) {
+      if (!group.documentIds?.length) continue;
+      const topK = Math.max(1, Math.min(50, Math.floor(Number(group.topK) || RAG_REFERENCE_TOP_K)));
+      const groupQuery = (group.query || query || '').trim() || '项目相关历史资料';
+      const folderLabel = group.folderName ? `「${group.folderName}」` : 'RAG';
+      log(`${folderLabel} 检索 ${group.documentIds.length} 个文档（Top ${topK}）。`, 6);
+      const results = await knowledgeBaseService.searchRag(groupQuery, {
+        documentIds: group.documentIds,
+        topK,
+      });
+      if (!Array.isArray(results) || !results.length) {
+        log(`${folderLabel} 检索未命中任何片段。`, 7);
+        continue;
+      }
+      const items = results.map((result, index) => ({
+        id: `RAG-${allItems.length + index + 1}`,
+        title: headingToTitle(result.headingPath, `匹配片段 ${allItems.length + index + 1}`),
+        resume: summarizeRagChunk(result.content),
+        document_id: result.documentId,
+        chunk_id: result.chunkId,
+        chunk_score: result.score,
+        chunk_model: result.modelName,
+        source_kind: 'rag',
+      }));
+      allItems.push(...items);
+    }
+    if (!allItems.length) {
+      log('RAG 检索未命中任何片段。', 7);
+      return [];
+    }
+    log(`RAG 检索命中 ${allItems.length} 条片段。`, 7);
+    return dedupeRagReferences(allItems);
+  } catch (error) {
+    log(`RAG 检索失败，将跳过 RAG 资料：${error.message || String(error)}`, 7);
+    return [];
+  }
+}
+
+function buildRagGroups(knowledgeBaseService, ragIds, defaultQuery) {
+  if (!knowledgeBaseService?.listRagReferences) {
+    return [{ documentIds: ragIds, topK: RAG_REFERENCE_TOP_K, query: defaultQuery }];
+  }
+  try {
+    const refs = knowledgeBaseService.listRagReferences(ragIds) || [];
+    const folderInfo = new Map(refs.map((ref) => [ref.documentId, ref]));
+    const byFolder = new Map();
+    for (const id of ragIds) {
+      const ref = folderInfo.get(id);
+      const folderId = ref?.folderId || '__no_folder__';
+      if (!byFolder.has(folderId)) {
+        byFolder.set(folderId, {
+          folderId,
+          folderName: ref?.folderName || 'RAG',
+          topK: RAG_REFERENCE_TOP_K,
+          query: defaultQuery,
+          documentIds: [],
+        });
+      }
+      byFolder.get(folderId).documentIds.push(id);
+    }
+    return Array.from(byFolder.values());
+  } catch (error) {
+    return [{ documentIds: ragIds, topK: RAG_REFERENCE_TOP_K, query: defaultQuery }];
+  }
+}
+
+function applyRagGroupOverrides(groups, overrides) {
+  if (!Array.isArray(overrides) || !overrides.length) return groups;
+  const overrideMap = new Map();
+  for (const entry of overrides) {
+    if (!entry || !entry.folderId) continue;
+    overrideMap.set(entry.folderId, {
+      topK: entry.topK,
+      query: entry.query,
+    });
+  }
+  return groups.map((group) => {
+    const override = overrideMap.get(group.folderId);
+    if (!override) return group;
+    return {
+      ...group,
+      topK: override.topK ? Math.max(1, Math.min(50, Math.floor(Number(override.topK) || group.topK))) : group.topK,
+      query: (override.query || '').trim() || group.query,
+    };
+  });
+}
+
+function partitionReferenceDocuments(knowledgeBaseService, documentIds) {
+  if (!knowledgeBaseService?.listRagReferences) {
+    return { extractionIds: documentIds.slice(), ragIds: [] };
+  }
+  try {
+    const refs = knowledgeBaseService.listRagReferences(documentIds) || [];
+    const ragSet = new Set(refs.filter((ref) => ref.folderMode === 'rag').map((ref) => ref.documentId));
+    const extractionIds = [];
+    const ragIds = [];
+    for (const id of documentIds) {
+      if (ragSet.has(id)) ragIds.push(id);
+      else extractionIds.push(id);
+    }
+    return { extractionIds, ragIds };
+  } catch (error) {
+    return { extractionIds: documentIds.slice(), ragIds: [] };
+  }
+}
+
 function outlineSystemPrompt() {
   return `你是一个专业的标书编写专家。根据提供的项目概述和技术评分要求，生成投标文件中技术标部分的目录结构。
 如果用户提供了自己编写的目录，你要保证目录满足技术评分要求，并充分结合用户自己编写的目录。
@@ -1243,7 +1404,16 @@ async function runOutlineGenerationTask({ aiService, workspaceStore, knowledgeBa
     reference_knowledge_document_ids: referenceKnowledgeDocumentIds,
   };
   let outline = taskPayload.mode === 'aligned' ? await alignedWorkflow(aiService, taskPayload, log) : await freeWorkflow(aiService, taskPayload, log);
-  const knowledgeItems = loadOutlineKnowledgeItems(knowledgeBaseService, referenceKnowledgeDocumentIds, log);
+  const { extractionIds, ragIds } = partitionReferenceDocuments(knowledgeBaseService, referenceKnowledgeDocumentIds);
+  const extractionItems = loadOutlineKnowledgeItems(knowledgeBaseService, extractionIds, log);
+  const ragDefaultQuery = buildRagQuery({ overview, requirements, existingOutline: outline });
+  const ragGroups = buildRagGroups(knowledgeBaseService, ragIds, ragDefaultQuery);
+  const ragGroupsWithConfig = applyRagGroupOverrides(ragGroups, payload.rag_folder_configs);
+  const ragItems = await loadOutlineRagReferences(knowledgeBaseService, ragIds, ragDefaultQuery, log, ragGroupsWithConfig);
+  const knowledgeItems = [...extractionItems, ...ragItems];
+  if (knowledgeItems.length) {
+    log(`参考知识汇总：原有知识条目 ${extractionItems.length} 条，RAG 检索 ${ragItems.length} 段。`, 7);
+  }
   outline = await enhanceOutlineWithKnowledgeAdditions(aiService, taskPayload, outline, knowledgeItems, log);
   technicalPlan = workspaceStore.updateTechnicalPlan({
     outlineData: { ...outline, project_overview: overview },

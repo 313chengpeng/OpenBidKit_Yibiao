@@ -157,6 +157,18 @@ const defaultConfig = {
     ...defaultImageModelProfiles.jinlong,
   },
   image_model_profiles: defaultImageModelProfiles,
+  embedding_model: {
+    provider: 'openai-compatible',
+    base_url: 'https://api.openai.com/v1',
+    api_key: '',
+    model_name: 'text-embedding-3-small',
+    dimensions: 1536,
+    batch_size: 32,
+    request_mode: 'normal',
+    status: 'untested',
+    tested_at: '',
+    last_error: '',
+  },
   file_parser: {
     provider: 'local',
     mineru_token: '',
@@ -370,6 +382,40 @@ function normalizeExportFormat(source) {
   return { page, headings, body_text };
 }
 
+const embeddingModelProviders = ['openai-compatible', 'volcengine', 'custom'];
+const embeddingRequestModes = ['normal', 'stream'];
+
+function normalizeEmbeddingModelConfig(source) {
+  const def = defaultConfig.embedding_model;
+  const value = source && typeof source === 'object' ? source : {};
+  const provider = embeddingModelProviders.includes(value.provider) ? value.provider : def.provider;
+  const baseUrl = typeof value.base_url === 'string' && value.base_url.trim()
+    ? value.base_url.trim().replace(/\/+$/, '')
+    : def.base_url;
+  const apiKey = typeof value.api_key === 'string' ? value.api_key : '';
+  const modelName = typeof value.model_name === 'string' && value.model_name.trim() ? value.model_name.trim() : def.model_name;
+  const dimensions = Number.isFinite(Number(value.dimensions)) && Number(value.dimensions) > 0
+    ? Math.round(Number(value.dimensions))
+    : def.dimensions;
+  const batchSize = Number.isFinite(Number(value.batch_size)) && Number(value.batch_size) > 0
+    ? Math.min(128, Math.max(1, Math.round(Number(value.batch_size))))
+    : def.batch_size;
+  const requestMode = embeddingRequestModes.includes(value.request_mode) ? value.request_mode : def.request_mode;
+  const status = ['untested', 'available', 'unavailable'].includes(value.status) ? value.status : def.status;
+  return {
+    provider,
+    base_url: baseUrl,
+    api_key: apiKey,
+    model_name: modelName,
+    dimensions,
+    batch_size: batchSize,
+    request_mode: requestMode,
+    status,
+    tested_at: typeof value.tested_at === 'string' ? value.tested_at : '',
+    last_error: typeof value.last_error === 'string' ? value.last_error : '',
+  };
+}
+
 function normalizeConfig(config) {
   const source = config || {};
   const fileParser = source.file_parser ? source.file_parser : {};
@@ -412,6 +458,7 @@ function normalizeConfig(config) {
     request_mode: activeTextProfile.request_mode,
     image_model: activeImageProfile,
     image_model_profiles: imageModelProfiles,
+    embedding_model: normalizeEmbeddingModelConfig(source.embedding_model),
     file_parser: {
       provider: fileParser.provider || defaultConfig.file_parser.provider,
       mineru_token: fileParser.mineru_token || defaultConfig.file_parser.mineru_token,

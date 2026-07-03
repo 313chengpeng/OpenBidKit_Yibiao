@@ -47,6 +47,8 @@ const bridge = {
     chat: (request) => ipcRenderer.invoke('ai:chat', request),
     requestJson: (request) => ipcRenderer.invoke('ai:request-json', request),
     testImageModel: (config) => ipcRenderer.invoke('ai:test-image-model', config),
+    testEmbeddingModel: () => ipcRenderer.invoke('ai:test-embedding-model'),
+    listEmbeddingModels: (config) => ipcRenderer.invoke('ai:list-embedding-models', config),
   },
   file: {
     selectDuplicateCheckFiles: (options) => ipcRenderer.invoke('file:select-duplicate-check-files', options),
@@ -55,7 +57,7 @@ const bridge = {
     getMigrationStatus: () => ipcRenderer.invoke('knowledge-base:get-migration-status'),
     migrateLegacy: () => ipcRenderer.invoke('knowledge-base:migrate-legacy'),
     list: () => ipcRenderer.invoke('knowledge-base:list'),
-    createFolder: (name) => ipcRenderer.invoke('knowledge-base:create-folder', name),
+    createFolder: (name, options) => ipcRenderer.invoke('knowledge-base:create-folder', name, options),
     renameFolder: (folderId, name) => ipcRenderer.invoke('knowledge-base:rename-folder', folderId, name),
     reorderFolder: (draggedFolderId, targetFolderId, position) => ipcRenderer.invoke('knowledge-base:reorder-folder', draggedFolderId, targetFolderId, position),
     deleteFolder: (folderId) => ipcRenderer.invoke('knowledge-base:delete-folder', folderId),
@@ -67,6 +69,11 @@ const bridge = {
     readMarkdown: (documentId) => ipcRenderer.invoke('knowledge-base:read-markdown', documentId),
     readItems: (documentId) => ipcRenderer.invoke('knowledge-base:read-items', documentId),
     readAnalysis: (documentId) => ipcRenderer.invoke('knowledge-base:read-analysis', documentId),
+    searchRag: (query, options) => ipcRenderer.invoke('knowledge-base:search-rag', query, options),
+    listRagReferences: (documentIds) => ipcRenderer.invoke('knowledge-base:list-rag-references', documentIds),
+    readRagChunks: (documentId) => ipcRenderer.invoke('knowledge-base:read-rag-chunks', documentId),
+    reembedRagDocument: (documentId) => ipcRenderer.invoke('knowledge-base:reembed-rag-document', documentId),
+    getRagStats: () => ipcRenderer.invoke('knowledge-base:get-rag-stats'),
     onEvent: (callback) => {
       const listener = (_event, payload) => callback(payload);
       ipcRenderer.on('knowledge-base:event', listener);

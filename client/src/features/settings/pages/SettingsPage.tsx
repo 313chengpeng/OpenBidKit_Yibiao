@@ -3,16 +3,17 @@ import { trackConfigUsage } from '../../../shared/analytics/analytics';
 import { FloatingToolbar, InputWithAction, useToast } from '../../../shared/ui';
 import { showUpdateReadyToast } from '../../../shared/updateToast';
 import type { FloatingToolbarGroup } from '../../../shared/ui';
-import type { AiRequestMode, ClientConfig, FileParserProvider, ImageModelConfig, ImageModelProfiles, ImageModelProvider, ImageModelStatus, TextModelConfig, TextModelProfiles, TextModelProvider, UpdateChannel } from '../../../shared/types';
+import type { AiRequestMode, ClientConfig, EmbeddingModelConfig, EmbeddingModelProvider, FileParserProvider, ImageModelConfig, ImageModelProfiles, ImageModelProvider, ImageModelStatus, TextModelConfig, TextModelProfiles, TextModelProvider, UpdateChannel } from '../../../shared/types';
 import type { SettingsPageState } from '../types';
 
-type SettingsTab = 'general' | 'text-model' | 'image-model' | 'file-parser' | 'about';
+type SettingsTab = 'general' | 'text-model' | 'image-model' | 'embedding-model' | 'file-parser' | 'about';
 type UpdateStatus = 'idle' | 'checking' | 'downloading' | 'downloaded' | 'error' | 'disabled';
 
 const settingsTabs: Array<{ id: SettingsTab; label: string }> = [
   { id: 'general', label: '通用' },
   { id: 'text-model', label: '文本模型' },
   { id: 'image-model', label: '生图模型' },
+  { id: 'embedding-model', label: 'Embedding 模型' },
   { id: 'file-parser', label: '文件解析' },
   { id: 'about', label: '关于' },
 ];
@@ -310,6 +311,111 @@ function formatImageTestTime(value?: string) {
   return date.toLocaleString('zh-CN', { hour12: false });
 }
 
+const embeddingProviders: Array<{ value: EmbeddingModelProvider; label: string }> = [
+  { value: 'openai-compatible', label: 'OpenAI 兼容接口' },
+  { value: 'volcengine', label: '火山方舟' },
+  { value: 'custom', label: '自定义' },
+];
+
+const embeddingProviderDefaults: Record<EmbeddingModelProvider, EmbeddingModelConfig> = {
+  'openai-compatible': {
+    provider: 'openai-compatible',
+    base_url: 'https://api.openai.com/v1',
+    api_key: '',
+    model_name: 'text-embedding-3-small',
+    dimensions: 1536,
+    batch_size: 32,
+    request_mode: 'stream',
+    status: 'untested',
+    tested_at: '',
+    last_error: '',
+  },
+  volcengine: {
+    provider: 'volcengine',
+    base_url: 'https://ark.cn-beijing.volces.com/api/v3',
+    api_key: '',
+    model_name: '',
+    dimensions: 1024,
+    batch_size: 16,
+    request_mode: 'stream',
+    status: 'untested',
+    tested_at: '',
+    last_error: '',
+  },
+  custom: {
+    provider: 'custom',
+    base_url: '',
+    api_key: '',
+    model_name: '',
+    dimensions: 1536,
+    batch_size: 32,
+    request_mode: 'stream',
+    status: 'untested',
+    tested_at: '',
+    last_error: '',
+  },
+};
+
+const DEFAULT_EMBEDDING_BATCH_SIZE = 32;
+const DEFAULT_EMBEDDING_DIMENSIONS = 1536;
+
+function normalizeEmbeddingBatchSize(value: number | '' | undefined): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_EMBEDDING_BATCH_SIZE;
+  }
+  return Math.max(1, Math.min(128, Math.floor(parsed)));
+}
+
+function parseEmbeddingBatchSizeInput(value: string): number | '' {
+  if (!value) return '';
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return '';
+  }
+  return Math.max(1, Math.min(128, Math.floor(parsed)));
+}
+
+function normalizeEmbeddingDimensions(value: number | '' | undefined): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_EMBEDDING_DIMENSIONS;
+  }
+  return Math.max(1, Math.min(8192, Math.floor(parsed)));
+}
+
+function parseEmbeddingDimensionsInput(value: string): number | '' {
+  if (!value) return '';
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return '';
+  }
+  return Math.max(1, Math.min(8192, Math.floor(parsed)));
+}
+
+function normalizeEmbeddingModelConfig(config?: Partial<EmbeddingModelConfig>): EmbeddingModelConfig {
+  const provider = (config?.provider || 'openai-compatible') as EmbeddingModelProvider;
+  const baseDefaults = embeddingProviderDefaults[provider] || embeddingProviderDefaults['openai-compatible'];
+  return {
+    provider,
+    base_url: config?.base_url ?? baseDefaults.base_url,
+    api_key: config?.api_key ?? '',
+    model_name: config?.model_name ?? '',
+    dimensions: normalizeEmbeddingDimensions(config?.dimensions ?? baseDefaults.dimensions),
+    batch_size: normalizeEmbeddingBatchSize(config?.batch_size ?? baseDefaults.batch_size),
+    request_mode: (config?.request_mode as AiRequestMode) || baseDefaults.request_mode,
+    status: config?.status || 'untested',
+    tested_at: config?.tested_at || '',
+    last_error: config?.last_error || '',
+  };
+}
+
+const embeddingStatusLabels: Record<NonNullable<EmbeddingModelConfig['status']>, string> = {
+  untested: '未测试',
+  available: '可用',
+  unavailable: '不可用',
+};
+
 const fileParserProviders: Array<{ value: FileParserProvider; label: string }> = [
   { value: 'local', label: '本地解析' },
   { value: 'mineru-accurate-api', label: 'MinerU-精准解析 API' },
@@ -371,6 +477,11 @@ const initialState: SettingsPageState = {
     ...imageProviderDefaults.jinlong,
   },
   imageModelProfiles: createDefaultImageModelProfiles(),
+  embeddingModel: {
+    ...normalizeEmbeddingModelConfig(embeddingProviderDefaults['openai-compatible']),
+    dimensions: embeddingProviderDefaults['openai-compatible'].dimensions,
+    batch_size: embeddingProviderDefaults['openai-compatible'].batch_size,
+  },
   fileParser: {
     provider: 'local',
     mineru_token: '',
@@ -393,10 +504,13 @@ function SettingsPage({ onDeveloperModeChange }: SettingsPageProps) {
   const [savedConfig, setSavedConfig] = useState<ClientConfig | null>(null);
   const [textModels, setTextModels] = useState<string[]>([]);
   const [imageModels, setImageModels] = useState<string[]>([]);
-  const [loadingModels, setLoadingModels] = useState<'text' | 'image' | null>(null);
+  const [embeddingModels, setEmbeddingModels] = useState<string[]>([]);
+  const [loadingModels, setLoadingModels] = useState<'text' | 'image' | 'embedding' | null>(null);
   const [testingTextModel, setTestingTextModel] = useState(false);
   const [testingImageModel, setTestingImageModel] = useState(false);
+  const [testingEmbeddingModel, setTestingEmbeddingModel] = useState(false);
   const [imageTestPreview, setImageTestPreview] = useState<{ src: string; title: string } | null>(null);
+  const [embeddingTestResult, setEmbeddingTestResult] = useState<{ model: string; dimensions: number; testedAt: string } | null>(null);
   const [appVersion, setAppVersion] = useState('');
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>('idle');
   const [updatePercent, setUpdatePercent] = useState(0);
@@ -445,6 +559,7 @@ function SettingsPage({ onDeveloperModeChange }: SettingsPageProps) {
       const imageModelProfiles = normalizeImageModelProfiles(config.image_model_profiles);
       const activeImageProfile = normalizeImageModelProfile(config.image_model.provider, config.image_model);
       imageModelProfiles[activeImageProfile.provider] = activeImageProfile;
+      const embeddingDefaults = normalizeEmbeddingModelConfig(config.embedding_model || embeddingProviderDefaults['openai-compatible']);
 
       setState((prev) => ({
         ...prev,
@@ -455,6 +570,11 @@ function SettingsPage({ onDeveloperModeChange }: SettingsPageProps) {
         textModelProfiles,
         imageModel: activeImageProfile,
         imageModelProfiles,
+        embeddingModel: {
+          ...embeddingDefaults,
+          dimensions: embeddingDefaults.dimensions,
+          batch_size: embeddingDefaults.batch_size,
+        },
         fileParser: {
           provider: config.file_parser.provider,
           mineru_token: config.file_parser.mineru_token || '',
@@ -501,6 +621,11 @@ function SettingsPage({ onDeveloperModeChange }: SettingsPageProps) {
       request_mode: activeTextProfile.request_mode,
       image_model: activeImageProfile,
       image_model_profiles: imageModelProfiles,
+      embedding_model: normalizeEmbeddingModelConfig({
+        ...state.embeddingModel,
+        dimensions: state.embeddingModel.dimensions === '' ? DEFAULT_EMBEDDING_DIMENSIONS : state.embeddingModel.dimensions,
+        batch_size: state.embeddingModel.batch_size === '' ? DEFAULT_EMBEDDING_BATCH_SIZE : state.embeddingModel.batch_size,
+      }),
       file_parser: {
         provider: state.fileParser.provider,
         mineru_token: state.fileParser.mineru_token || '',
@@ -601,6 +726,123 @@ function SettingsPage({ onDeveloperModeChange }: SettingsPageProps) {
       },
       imageModel: normalizeImageModelProfile(provider, prev.imageModelProfiles[provider]),
     }));
+  };
+
+  const updateEmbeddingModelConfig = (partial: Partial<Omit<EmbeddingModelConfig, 'provider' | 'dimensions' | 'batch_size'>> & {
+    dimensions?: number | '';
+    batch_size?: number | '';
+  }) => {
+    setEmbeddingTestResult(null);
+    if ('base_url' in partial || 'api_key' in partial) {
+      setEmbeddingModels([]);
+    }
+    setState((prev) => ({
+      ...prev,
+      embeddingModel: {
+        ...prev.embeddingModel,
+        ...partial,
+        status: 'untested',
+        tested_at: '',
+        last_error: '',
+      },
+    }));
+  };
+
+  const updateEmbeddingModelProvider = (provider: EmbeddingModelProvider) => {
+    setEmbeddingTestResult(null);
+    setEmbeddingModels([]);
+    const defaults = embeddingProviderDefaults[provider];
+    setState((prev) => ({
+      ...prev,
+      embeddingModel: {
+        ...prev.embeddingModel,
+        provider,
+        base_url: defaults.base_url,
+        dimensions: defaults.dimensions,
+        batch_size: defaults.batch_size,
+        status: 'untested',
+        tested_at: '',
+        last_error: '',
+      },
+    }));
+  };
+
+  const fetchEmbeddingModels = async () => {
+    try {
+      setLoadingModels('embedding');
+      const result = await window.yibiao?.ai.listEmbeddingModels({
+        provider: state.embeddingModel.provider,
+        base_url: state.embeddingModel.base_url,
+        api_key: state.embeddingModel.api_key,
+        model_name: state.embeddingModel.model_name,
+        dimensions: state.embeddingModel.dimensions === '' ? DEFAULT_EMBEDDING_DIMENSIONS : state.embeddingModel.dimensions,
+        batch_size: state.embeddingModel.batch_size === '' ? DEFAULT_EMBEDDING_BATCH_SIZE : state.embeddingModel.batch_size,
+      });
+      const models = result?.models || [];
+      setEmbeddingModels(models);
+      if (result?.success && models.length > 0) {
+        setState((prev) => ({
+          ...prev,
+          embeddingModel: {
+            ...prev.embeddingModel,
+            model_name: models.includes(prev.embeddingModel.model_name) ? prev.embeddingModel.model_name : models[0],
+          },
+        }));
+      }
+      showToast(result?.message || `获取到 ${models.length} 个 Embedding 模型`, result?.success ? 'success' : 'info');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : '获取 Embedding 模型失败', 'error');
+    } finally {
+      setLoadingModels(null);
+    }
+  };
+
+  const testEmbeddingConfig = async () => {
+    try {
+      setTestingEmbeddingModel(true);
+      const config = createClientConfig();
+      const saved = await saveClientConfig(config);
+      if (!saved) {
+        setTestingEmbeddingModel(false);
+        return;
+      }
+      const result = await window.yibiao?.ai.testEmbeddingModel();
+      if (!result?.success) {
+        throw new Error('Embedding 服务测试失败');
+      }
+      const testedAt = new Date().toISOString();
+      setState((prev) => ({
+        ...prev,
+        embeddingModel: {
+          ...prev.embeddingModel,
+          status: 'available',
+          tested_at: testedAt,
+          last_error: '',
+          model_name: result.model || prev.embeddingModel.model_name,
+          dimensions: result.dimensions || prev.embeddingModel.dimensions,
+        },
+      }));
+      setEmbeddingTestResult({
+        model: result.model,
+        dimensions: result.dimensions,
+        testedAt,
+      });
+      showToast(`Embedding 测试成功：${result.model} / ${result.dimensions} 维`, 'success');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Embedding 测试失败';
+      setState((prev) => ({
+        ...prev,
+        embeddingModel: {
+          ...prev.embeddingModel,
+          status: 'unavailable',
+          tested_at: new Date().toISOString(),
+          last_error: message,
+        },
+      }));
+      showToast(message, 'error');
+    } finally {
+      setTestingEmbeddingModel(false);
+    }
   };
 
   const saveClientConfig = async (config: ClientConfig) => {
@@ -994,6 +1236,16 @@ function SettingsPage({ onDeveloperModeChange }: SettingsPageProps) {
       });
     }
 
+    if (activeTab === 'embedding-model') {
+      const currentEmbedding: EmbeddingModelConfig = {
+        ...state.embeddingModel,
+        dimensions: state.embeddingModel.dimensions === '' ? DEFAULT_EMBEDDING_DIMENSIONS : state.embeddingModel.dimensions,
+        batch_size: state.embeddingModel.batch_size === '' ? DEFAULT_EMBEDDING_BATCH_SIZE : state.embeddingModel.batch_size,
+      };
+      return JSON.stringify(normalizeEmbeddingModelConfig(currentEmbedding)) !==
+        JSON.stringify(normalizeEmbeddingModelConfig(savedConfig.embedding_model));
+    }
+
     if (activeTab === 'file-parser') {
       return JSON.stringify(state.fileParser) !== JSON.stringify(savedConfig.file_parser);
     }
@@ -1050,12 +1302,19 @@ function SettingsPage({ onDeveloperModeChange }: SettingsPageProps) {
       await saveImageConfig();
       return;
     }
+    if (activeTab === 'embedding-model') {
+      const saved = await saveClientConfig(createClientConfig());
+      if (saved) {
+        showToast('Embedding 模型已保存', 'success');
+      }
+      return;
+    }
     if (activeTab === 'file-parser') {
       await saveFileParserConfig();
     }
   };
 
-  const canSaveActiveTab = activeTab === 'general' || activeTab === 'text-model' || activeTab === 'image-model' || activeTab === 'file-parser';
+  const canSaveActiveTab = activeTab === 'general' || activeTab === 'text-model' || activeTab === 'image-model' || activeTab === 'embedding-model' || activeTab === 'file-parser';
   const activeTabDirty = isActiveTabDirty();
   const currentTextProviderDefault = textProviderDefaults[state.textModel.provider];
   const imageModelStatus: ImageModelStatus = state.imageModel.status || 'untested';
@@ -1481,6 +1740,158 @@ function SettingsPage({ onDeveloperModeChange }: SettingsPageProps) {
                 <span>用于确认当前生图配置可用</span>
               </div>
               <img src={imageTestPreview.src} alt="生图模型测试结果" />
+            </div>
+          )}
+        </section>
+      )}
+
+      {activeTab === 'embedding-model' && (
+        <section className="settings-page-section">
+          <div className="settings-section-title">
+            <span />
+            <strong>Embedding 模型配置</strong>
+          </div>
+          <div className={`image-model-status is-${state.embeddingModel.status || 'untested'}`}>
+            <div>
+              <strong>接口状态：{embeddingStatusLabels[state.embeddingModel.status || 'untested']}</strong>
+              <span>用于 RAG 知识库切分文档后的向量化检索</span>
+              {state.embeddingModel.tested_at && <small>最近测试：{formatImageTestTime(state.embeddingModel.tested_at)}</small>}
+              {state.embeddingModel.status === 'unavailable' && state.embeddingModel.last_error && (
+                <small>失败原因：{state.embeddingModel.last_error}</small>
+              )}
+            </div>
+            <em>{embeddingStatusLabels[state.embeddingModel.status || 'untested']}</em>
+          </div>
+          <div className="settings-list">
+            <label className="settings-row">
+              <div className="settings-row-copy">
+                <strong>服务提供商</strong>
+                <span>选择 OpenAI 兼容接口、火山方舟或自定义地址</span>
+              </div>
+              <select
+                value={state.embeddingModel.provider}
+                onChange={(event) => updateEmbeddingModelProvider(event.target.value as EmbeddingModelProvider)}
+              >
+                {embeddingProviders.map((provider) => (
+                  <option value={provider.value} key={provider.value}>{provider.label}</option>
+                ))}
+              </select>
+            </label>
+            <label className="settings-row">
+              <div className="settings-row-copy">
+                <strong>Base URL</strong>
+                <span>Embedding 服务的 OpenAI 兼容 /embeddings 接口地址</span>
+              </div>
+              <input
+                type="text"
+                value={state.embeddingModel.base_url}
+                placeholder={embeddingProviderDefaults[state.embeddingModel.provider].base_url}
+                onChange={(event) => updateEmbeddingModelConfig({ base_url: event.target.value })}
+              />
+            </label>
+            <label className="settings-row">
+              <div className="settings-row-copy">
+                <strong>API Key</strong>
+                <span>仅保存在本机配置文件中</span>
+              </div>
+              <input
+                type="password"
+                value={state.embeddingModel.api_key}
+                placeholder="请输入 Embedding 服务 API Key"
+                onChange={(event) => updateEmbeddingModelConfig({ api_key: event.target.value })}
+              />
+            </label>
+            <label className="settings-row">
+              <div className="settings-row-copy">
+                <strong>模型名称</strong>
+                <span>需要服务商支持 /embeddings 接口；火山方舟使用接入点 ID</span>
+              </div>
+              <div className="settings-control-with-action">
+                {embeddingModels.length > 0 ? (
+                  <select
+                    value={state.embeddingModel.model_name}
+                    onChange={(event) => updateEmbeddingModelConfig({ model_name: event.target.value })}
+                  >
+                    {embeddingModels.map((model) => <option value={model} key={model}>{model}</option>)}
+                  </select>
+                ) : (
+                  <input
+                    type="text"
+                    value={state.embeddingModel.model_name}
+                    placeholder="例如 text-embedding-3-small"
+                    onChange={(event) => updateEmbeddingModelConfig({ model_name: event.target.value })}
+                  />
+                )}
+                <button
+                  type="button"
+                  className="inline-action"
+                  onClick={fetchEmbeddingModels}
+                  disabled={loadingModels === 'embedding'}
+                >
+                  {loadingModels === 'embedding' && <span className="inline-spinner" aria-hidden="true" />}
+                  {loadingModels === 'embedding' ? '获取中' : '获取'}
+                </button>
+                <button
+                  type="button"
+                  className="inline-action"
+                  onClick={testEmbeddingConfig}
+                  disabled={testingEmbeddingModel}
+                >
+                  {testingEmbeddingModel && <span className="inline-spinner" aria-hidden="true" />}
+                  {testingEmbeddingModel ? '测试中' : '测试'}
+                </button>
+              </div>
+            </label>
+            <label className="settings-row">
+              <div className="settings-row-copy">
+                <strong>向量维度</strong>
+                <span>必须与所选模型实际返回的向量维度一致，切换模型后建议重新测试</span>
+              </div>
+              <input
+                type="number"
+                min={1}
+                step={1}
+                value={state.embeddingModel.dimensions}
+                placeholder={String(DEFAULT_EMBEDDING_DIMENSIONS)}
+                onChange={(event) => updateEmbeddingModelConfig({ dimensions: parseEmbeddingDimensionsInput(event.target.value) })}
+              />
+            </label>
+            <label className="settings-row">
+              <div className="settings-row-copy">
+                <strong>批处理大小</strong>
+                <span>一次向量化请求包含的 Chunk 数量；偏大可提升吞吐，过大可能触发服务商限流</span>
+              </div>
+              <input
+                type="number"
+                min={1}
+                step={1}
+                value={state.embeddingModel.batch_size}
+                placeholder={String(DEFAULT_EMBEDDING_BATCH_SIZE)}
+                onChange={(event) => updateEmbeddingModelConfig({ batch_size: parseEmbeddingBatchSizeInput(event.target.value) })}
+              />
+            </label>
+            <label className="settings-row">
+              <div className="settings-row-copy">
+                <strong>请求方式</strong>
+                <span>Embedding 接口通常为非流式，流式仅作占位；测试按钮会强制使用真实调用</span>
+              </div>
+              <select
+                value={state.embeddingModel.request_mode}
+                onChange={(event) => updateEmbeddingModelConfig({ request_mode: event.target.value as AiRequestMode })}
+              >
+                {aiRequestModeOptions.map((option) => (
+                  <option value={option.value} key={option.value}>{option.label}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+          {embeddingTestResult && (
+            <div className="image-test-preview">
+              <div>
+                <strong>Embedding 测试结果</strong>
+                <span>模型：{embeddingTestResult.model}，维度：{embeddingTestResult.dimensions}</span>
+              </div>
+              <small>测试时间：{formatImageTestTime(embeddingTestResult.testedAt)}</small>
             </div>
           )}
         </section>

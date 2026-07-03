@@ -1,7 +1,7 @@
 import type { ChatCompletionRequest, JsonCompletionRequest } from './ai';
 import type { DuplicateCheckWorkspaceState, FileSelectionResult } from './bid';
 import type { ClientConfig, ConfigSaveResult, ImageModelTestResult, ModelListResult, UpdateChannel } from './config';
-import type { KnowledgeAnalysisSnapshot, KnowledgeBaseEvent, KnowledgeBaseIndex, KnowledgeBaseIndexMutationResult, KnowledgeBaseMigrationResult, KnowledgeBaseMigrationStatus, KnowledgeBaseMutationResult, KnowledgeBaseRetryDocumentResult, KnowledgeBaseStartMatchingResult, KnowledgeBaseUploadResult, KnowledgeDocument, KnowledgeFolder, KnowledgeItem } from '../../features/knowledge-base/types';
+import type { KnowledgeAnalysisSnapshot, KnowledgeBaseEvent, KnowledgeBaseIndex, KnowledgeBaseIndexMutationResult, KnowledgeBaseMigrationResult, KnowledgeBaseMigrationStatus, KnowledgeBaseMutationResult, KnowledgeBaseRetryDocumentResult, KnowledgeBaseStartMatchingResult, KnowledgeBaseUploadResult, KnowledgeDocument, KnowledgeFolder, KnowledgeItem, KnowledgeRagChunk, KnowledgeRagReference, KnowledgeRagSearchResult, KnowledgeRagStats } from '../../features/knowledge-base/types';
 import type { RejectionCheckWorkspaceState, RejectionDocumentRole } from '../../features/rejection-check/types';
 import type { BidAnalysisMode, BidAnalysisTaskState, ContentGenerationOptions, ContentGenerationPlanState, ContentGenerationRuntimeState, ContentGenerationSectionState, DetectedBidSection, GlobalFactGroupState, SaveOutlineRequest, TechnicalPlanState, TechnicalPlanStep, TechnicalPlanWorkflowKind } from '../../features/technical-plan/types';
 import type { OutlineData, OutlineMode } from './outline';
@@ -112,6 +112,8 @@ export interface YibiaoBridge {
     chat: (request: ChatCompletionRequest) => Promise<string>;
     requestJson: <TResult = unknown>(request: JsonCompletionRequest) => Promise<TResult>;
     testImageModel: (config: ClientConfig) => Promise<ImageModelTestResult>;
+    testEmbeddingModel: () => Promise<{ success: boolean; model: string; dimensions: number; preview: number[] }>;
+    listEmbeddingModels: (config?: Partial<ClientConfig['embedding_model']>) => Promise<ModelListResult>;
   };
   file: {
     selectDuplicateCheckFiles: (options?: { multiple?: boolean }) => Promise<FileSelectionResult>;
@@ -120,7 +122,7 @@ export interface YibiaoBridge {
     getMigrationStatus: () => Promise<KnowledgeBaseMigrationStatus>;
     migrateLegacy: () => Promise<KnowledgeBaseMigrationResult>;
     list: () => Promise<KnowledgeBaseIndex>;
-    createFolder: (name: string) => Promise<KnowledgeFolder>;
+    createFolder: (name: string, options?: { mode?: KnowledgeFolder['mode']; embedding_model?: string | null; embedding_dimensions?: number | null }) => Promise<KnowledgeFolder>;
     renameFolder: (folderId: string, name: string) => Promise<KnowledgeFolder>;
     reorderFolder: (draggedFolderId: string, targetFolderId: string, position: 'before' | 'after') => Promise<KnowledgeBaseIndexMutationResult>;
     deleteFolder: (folderId: string) => Promise<KnowledgeBaseMutationResult>;
@@ -132,6 +134,11 @@ export interface YibiaoBridge {
     readMarkdown: (documentId: string) => Promise<string>;
     readItems: (documentId: string) => Promise<KnowledgeItem[]>;
     readAnalysis: (documentId: string) => Promise<KnowledgeAnalysisSnapshot>;
+    searchRag: (query: string, options?: { documentIds?: string[]; topK?: number; minScore?: number }) => Promise<KnowledgeRagSearchResult[]>;
+    listRagReferences: (documentIds: string[]) => Promise<KnowledgeRagReference[]>;
+    readRagChunks: (documentId: string) => Promise<KnowledgeRagChunk[]>;
+    reembedRagDocument: (documentId: string) => Promise<KnowledgeBaseRetryDocumentResult>;
+    getRagStats: () => Promise<KnowledgeRagStats>;
     onEvent: (callback: (event: KnowledgeBaseEvent) => void) => () => void;
   };
   technicalPlan: {

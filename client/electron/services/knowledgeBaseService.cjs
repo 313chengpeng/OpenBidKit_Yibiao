@@ -684,7 +684,7 @@ function createReport({ blocks, filteredBlocks, candidateItems, finalItems, matc
   };
 }
 
-function createKnowledgeBaseService({ app, aiService, configStore, knowledgeBaseStore }) {
+function createKnowledgeBaseService({ app, aiService, configStore, knowledgeBaseStore, ragService, vectorIndexService }) {
   const baseDir = getKnowledgeBaseDir(app);
   const activePreparations = new Set();
   const activeMatches = new Set();
@@ -1282,8 +1282,13 @@ function createKnowledgeBaseService({ app, aiService, configStore, knowledgeBase
       return knowledgeBaseStore.list();
     },
 
-    createFolder(name) {
-      return knowledgeBaseStore.createFolder(name);
+    createFolder(name, options = {}) {
+      const ragEmbedding = options.mode === 'rag' ? knowledgeBaseStore.getRagConfig?.() : null;
+      return knowledgeBaseStore.createFolder(name, {
+        ...options,
+        embedding_model: ragEmbedding?.embeddingModel || null,
+        embedding_dimensions: ragEmbedding?.embeddingDimensions || null,
+      });
     },
 
     renameFolder(folderId, name) {
@@ -1398,6 +1403,8 @@ function createKnowledgeBaseService({ app, aiService, configStore, knowledgeBase
       }
 
       const created = [];
+      const targetFolder = knowledgeBaseStore.list().folders.find((entry) => entry.id === folderId);
+      const folderMode = targetFolder?.mode || 'extraction';
       for (const filePath of result.filePaths) {
         const ext = path.extname(filePath).toLowerCase();
         if (!supportedExtensions.has(ext)) continue;
@@ -1420,13 +1427,19 @@ function createKnowledgeBaseService({ app, aiService, configStore, knowledgeBase
           candidate_item_count: 0,
           discarded_block_count: 0,
           system_discarded_after_retry_count: 0,
+          chunk_count: 0,
+          embedded_chunk_count: 0,
           created_at: now(),
           updated_at: now(),
         };
         const savedDocument = knowledgeBaseStore.createDocument(document);
         created.push(savedDocument);
         emitProgress(webContents, savedDocument);
-        prepareDocument(documentId, filePath, webContents);
+        if (folderMode === 'rag' && ragService) {
+          ragService.prepareRagDocument(documentId, filePath, webContents);
+        } else {
+          prepareDocument(documentId, filePath, webContents);
+        }
       }
 
       return { success: Boolean(created.length), message: created.length ? `已加入 ${created.length} 个文档处理任务` : '未选择支持的文档类型', documents: created };
@@ -1447,6 +1460,12 @@ function createKnowledgeBaseService({ app, aiService, configStore, knowledgeBase
         return { success: false, message: '原始文件不存在，请重新上传', document };
       }
 
+      const folder = knowledgeBaseStore.list().folders.find((entry) => entry.id === document.folder_id);
+      const folderMode = folder?.mode || 'extraction';
+      if (folderMode === 'rag' && ragService) {
+        ragService.reembedDocument(documentId, webContents);
+        return { success: true, message: '已重新构建 RAG 索引', document: getDocument(documentId) };
+      }
       prepareDocument(documentId, sourcePath, webContents);
       return { success: true, message: '已重新开始解析', document: getDocument(documentId) };
     },
@@ -1466,6 +1485,33 @@ function createKnowledgeBaseService({ app, aiService, configStore, knowledgeBase
 
     getOutlineReferences(documentIds) {
       return knowledgeBaseStore.getOutlineReferences(documentIds);
+    },
+
+    searchRag(query, options = {}) {
+      if (!ragService) {
+        throw new Error('RAG 服务尚未启用');
+      }
+      return ragService.search(query, options);
+    },
+
+    listRagReferences(documentIds) {
+      return knowledgeBaseStore.listRagReferences(documentIds);
+    },
+
+    readRagChunks(documentId) {
+      return knowledgeBaseStore.readRagChunks(documentId);
+    },
+
+    reembedRagDocument(documentId, webContents) {
+      if (!ragService) {
+        return { success: false, message: 'RAG 服务尚未启用' };
+      }
+      return ragService.reembedDocument(documentId, webContents);
+    },
+
+    getRagIndexStats() {
+      if (!vectorIndexService) return { size: 0 };
+      return { size: vectorIndexService.size() };
     },
 
     readMarkdown(documentId) {

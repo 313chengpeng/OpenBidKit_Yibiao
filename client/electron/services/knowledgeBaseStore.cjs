@@ -3,7 +3,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { getKnowledgeBaseDir } = require('../utils/paths.cjs');
 
-const documentStatuses = ['pending', 'copying', 'converting', 'extracting', 'ready_for_matching', 'matching', 'recovering', 'analyzing', 'saving', 'success', 'error'];
+const documentStatuses = ['pending', 'copying', 'converting', 'chunking', 'embedding', 'extracting', 'ready_for_matching', 'matching', 'recovering', 'analyzing', 'saving', 'success', 'error'];
+const folderModes = ['extraction', 'rag'];
 const documentStepKeys = ['copy_source', 'convert_markdown', 'build_blocks', 'extract_first_items', 'extract_supplement_items', 'merge_candidates', 'match_batches', 'recover_missing', 'save_result'];
 const stepStatuses = ['idle', 'running', 'success', 'error'];
 const legacyResultJsonFiles = [
@@ -29,6 +30,10 @@ function safeName(name) {
 
 function normalizeStatus(value) {
   return documentStatuses.includes(value) ? value : 'pending';
+}
+
+function normalizeFolderMode(value) {
+  return folderModes.includes(value) ? value : 'extraction';
 }
 
 function normalizeStepStatus(value) {
@@ -117,6 +122,13 @@ function normalizeDocument(document) {
     discarded_block_count: Number(document?.discarded_block_count || 0),
     system_discarded_after_retry_count: Number(document?.system_discarded_after_retry_count || 0),
     last_batch_size: document?.last_batch_size === undefined || document?.last_batch_size === null ? undefined : Number(document.last_batch_size || 0),
+    chunk_count: Number(document?.chunk_count || 0),
+    embedded_chunk_count: Number(document?.embedded_chunk_count || 0),
+    embedding_model: document?.embedding_model ? String(document.embedding_model) : undefined,
+    embedding_dimensions: document?.embedding_dimensions === undefined || document?.embedding_dimensions === null
+      ? undefined
+      : Number(document.embedding_dimensions),
+    embedding_updated_at: document?.embedding_updated_at ? String(document.embedding_updated_at) : undefined,
     parser_label: document?.parser_label ? String(document.parser_label) : undefined,
     sort_order: hasSortOrder ? Number(document.sort_order ?? document.sortOrder ?? 0) : undefined,
     created_at: document?.created_at || now(),
@@ -158,7 +170,7 @@ function normalizeIndex(index) {
   return { folders, documents };
 }
 
-function createKnowledgeBaseStore({ app, db }) {
+function createKnowledgeBaseStore({ app, db, configStore, embeddingService }) {
   const baseDir = getKnowledgeBaseDir(app);
   const legacyIndexPath = path.join(baseDir, 'index.json');
 
@@ -191,6 +203,11 @@ function createKnowledgeBaseStore({ app, db }) {
       discarded_block_count: Number(row.discarded_block_count || 0),
       system_discarded_after_retry_count: Number(row.system_discarded_after_retry_count || 0),
       last_batch_size: row.last_batch_size === null || row.last_batch_size === undefined ? undefined : Number(row.last_batch_size || 0),
+      chunk_count: Number(row.chunk_count || 0),
+      embedded_chunk_count: Number(row.embedded_chunk_count || 0),
+      embedding_model: row.embedding_model || undefined,
+      embedding_dimensions: row.embedding_dimensions === null || row.embedding_dimensions === undefined ? undefined : Number(row.embedding_dimensions),
+      embedding_updated_at: row.embedding_updated_at || undefined,
       parser_label: row.parser_label || undefined,
       sort_order: Number(row.sort_order || 0),
       created_at: row.created_at,
@@ -203,6 +220,9 @@ function createKnowledgeBaseStore({ app, db }) {
     return {
       id: row.folder_id,
       name: row.name,
+      mode: normalizeFolderMode(row.mode),
+      embedding_model: row.embedding_model || undefined,
+      embedding_dimensions: row.embedding_dimensions === null || row.embedding_dimensions === undefined ? undefined : Number(row.embedding_dimensions),
       sort_order: Number(row.sort_order || 0),
       created_at: row.created_at,
       updated_at: row.updated_at,
@@ -211,18 +231,24 @@ function createKnowledgeBaseStore({ app, db }) {
 
   function insertOrUpdateFolder(folder) {
     db.prepare(`
-      INSERT INTO knowledge_folders (folder_id, name, sort_order, created_at, updated_at)
-      VALUES (@folder_id, @name, @sort_order, @created_at, @updated_at)
+      INSERT INTO knowledge_folders (folder_id, name, sort_order, created_at, updated_at, mode, embedding_model, embedding_dimensions)
+      VALUES (@folder_id, @name, @sort_order, @created_at, @updated_at, @mode, @embedding_model, @embedding_dimensions)
       ON CONFLICT(folder_id) DO UPDATE SET
         name = excluded.name,
         sort_order = excluded.sort_order,
-        updated_at = excluded.updated_at
+        updated_at = excluded.updated_at,
+        mode = excluded.mode,
+        embedding_model = excluded.embedding_model,
+        embedding_dimensions = excluded.embedding_dimensions
     `).run({
       folder_id: folder.id,
       name: safeName(folder.name),
       sort_order: Number(folder.sort_order || 0),
       created_at: folder.created_at || now(),
       updated_at: folder.updated_at || now(),
+      mode: normalizeFolderMode(folder.mode),
+      embedding_model: folder.embedding_model || null,
+      embedding_dimensions: Number.isFinite(Number(folder.embedding_dimensions)) ? Number(folder.embedding_dimensions) : null,
     });
   }
 
@@ -240,11 +266,13 @@ function createKnowledgeBaseStore({ app, db }) {
         document_id, folder_id, file_name, document_dir, source_path, markdown_path, markdown_hash, markdown_chars,
         source_extension, status, progress, message, error, item_count, block_count, filtered_block_count,
         candidate_item_count, discarded_block_count, system_discarded_after_retry_count, last_batch_size, parser_label, sort_order,
+        chunk_count, embedded_chunk_count, embedding_model, embedding_dimensions, embedding_updated_at,
         created_at, updated_at
       ) VALUES (
         @document_id, @folder_id, @file_name, @document_dir, @source_path, @markdown_path, @markdown_hash, @markdown_chars,
         @source_extension, @status, @progress, @message, @error, @item_count, @block_count, @filtered_block_count,
         @candidate_item_count, @discarded_block_count, @system_discarded_after_retry_count, @last_batch_size, @parser_label, @sort_order,
+        @chunk_count, @embedded_chunk_count, @embedding_model, @embedding_dimensions, @embedding_updated_at,
         @created_at, @updated_at
       ) ON CONFLICT(document_id) DO UPDATE SET
         folder_id = excluded.folder_id,
@@ -268,6 +296,11 @@ function createKnowledgeBaseStore({ app, db }) {
         last_batch_size = excluded.last_batch_size,
         parser_label = excluded.parser_label,
         sort_order = excluded.sort_order,
+        chunk_count = excluded.chunk_count,
+        embedded_chunk_count = excluded.embedded_chunk_count,
+        embedding_model = excluded.embedding_model,
+        embedding_dimensions = excluded.embedding_dimensions,
+        embedding_updated_at = excluded.embedding_updated_at,
         updated_at = excluded.updated_at
     `).run({
       document_id: normalized.id,
@@ -292,6 +325,11 @@ function createKnowledgeBaseStore({ app, db }) {
       last_batch_size: normalized.last_batch_size === undefined ? null : normalized.last_batch_size,
       parser_label: normalized.parser_label || null,
       sort_order: Number(normalized.sort_order || 0),
+      chunk_count: Number(normalized.chunk_count || 0),
+      embedded_chunk_count: Number(normalized.embedded_chunk_count || 0),
+      embedding_model: normalized.embedding_model || null,
+      embedding_dimensions: Number.isFinite(Number(normalized.embedding_dimensions)) ? Number(normalized.embedding_dimensions) : null,
+      embedding_updated_at: normalized.embedding_updated_at || null,
       created_at: normalized.created_at,
       updated_at: normalized.updated_at,
     });
@@ -357,10 +395,19 @@ function createKnowledgeBaseStore({ app, db }) {
     return documentFromRow(row);
   }
 
-  function createFolder(name) {
+  function createFolder(name, options = {}) {
     const timestamp = now();
     const maxOrder = db.prepare('SELECT COALESCE(MAX(sort_order), -1) AS value FROM knowledge_folders').get()?.value ?? -1;
-    const folder = { id: createId('folder'), name: safeName(name), sort_order: Number(maxOrder) + 1, created_at: timestamp, updated_at: timestamp };
+    const folder = {
+      id: createId('folder'),
+      name: safeName(name),
+      mode: normalizeFolderMode(options.mode),
+      embedding_model: options.embedding_model || null,
+      embedding_dimensions: Number.isFinite(Number(options.embedding_dimensions)) ? Number(options.embedding_dimensions) : null,
+      sort_order: Number(maxOrder) + 1,
+      created_at: timestamp,
+      updated_at: timestamp,
+    };
     insertOrUpdateFolder(folder);
     return folderFromRow(db.prepare('SELECT * FROM knowledge_folders WHERE folder_id = ?').get(folder.id));
   }
@@ -1367,6 +1414,209 @@ function createKnowledgeBaseStore({ app, db }) {
     }
   }
 
+  function getRagConfig() {
+    const fullConfig = configStore?.load?.() || {};
+    const embedding = fullConfig.embedding_model || {};
+    const fileParser = fullConfig.file_parser || {};
+    return {
+      embeddingModel: embedding.model_name || '',
+      embeddingDimensions: Number(embedding.dimensions) || 0,
+      embeddingProvider: embedding.provider || 'openai-compatible',
+      baseUrl: embedding.base_url || '',
+      fileParser: {
+        provider: fileParser.provider || 'local',
+        mineru_token: fileParser.mineru_token || '',
+      },
+    };
+  }
+
+  function getFileParserConfig() {
+    return getRagConfig().fileParser;
+  }
+
+  function saveRagChunks(documentId, chunks) {
+    if (!Array.isArray(chunks) || !chunks.length) {
+      throw new Error('RAG chunks 不能为空');
+    }
+    getDocument(documentId);
+    const timestamp = now();
+    const insert = db.prepare(`
+      INSERT INTO knowledge_rag_chunks (
+        document_id, chunk_id, heading_path_json, content, content_chars, token_estimate, sort_order, created_at, updated_at
+      ) VALUES (
+        @document_id, @chunk_id, @heading_path_json, @content, @content_chars, @token_estimate, @sort_order, @created_at, @updated_at
+      )
+      ON CONFLICT(document_id, chunk_id) DO UPDATE SET
+        heading_path_json = excluded.heading_path_json,
+        content = excluded.content,
+        content_chars = excluded.content_chars,
+        token_estimate = excluded.token_estimate,
+        sort_order = excluded.sort_order,
+        updated_at = excluded.updated_at
+    `);
+    const deleteAll = db.prepare('DELETE FROM knowledge_rag_chunks WHERE document_id = ?');
+    const tx = db.transaction((rows) => {
+      deleteAll.run(documentId);
+      rows.forEach((chunk, index) => {
+        insert.run({
+          document_id: documentId,
+          chunk_id: String(chunk.chunk_id || `C${String(index + 1).padStart(6, '0')}`),
+          heading_path_json: chunk.heading_path ? JSON.stringify(chunk.heading_path) : null,
+          content: String(chunk.content || ''),
+          content_chars: Number(chunk.content_chars || getContentCharCount(chunk.content)),
+          token_estimate: Number(chunk.token_estimate || 0),
+          sort_order: index,
+          created_at: timestamp,
+          updated_at: timestamp,
+        });
+      });
+    });
+    tx(chunks);
+
+    const ragConfig = getRagConfig();
+    updateDocument(documentId, {
+      chunk_count: chunks.length,
+      embedded_chunk_count: 0,
+      embedding_model: ragConfig.embeddingModel,
+      embedding_dimensions: ragConfig.embeddingDimensions,
+      embedding_updated_at: null,
+      message: `已切分 ${chunks.length} 个 chunk`,
+    });
+  }
+
+  function readRagChunks(documentId) {
+    const rows = db.prepare(`
+      SELECT id, document_id, chunk_id, heading_path_json, content, content_chars, token_estimate, sort_order, created_at, updated_at
+      FROM knowledge_rag_chunks
+      WHERE document_id = ?
+      ORDER BY sort_order ASC
+    `).all(documentId);
+    return rows.map((row) => ({
+      id: Number(row.id),
+      document_id: row.document_id,
+      chunk_id: row.chunk_id,
+      heading_path: safeJsonParse(row.heading_path_json, null),
+      content: row.content,
+      content_chars: Number(row.content_chars || 0),
+      token_estimate: Number(row.token_estimate || 0),
+      sort_order: Number(row.sort_order || 0),
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+    }));
+  }
+
+  function saveRagEmbeddings(documentId, modelName, records, dimensions) {
+    if (!Array.isArray(records) || !records.length) {
+      throw new Error('RAG embeddings 不能为空');
+    }
+    if (!embeddingService) {
+      throw new Error('Embedding 服务尚未注入');
+    }
+    const timestamp = now();
+    const insert = db.prepare(`
+      INSERT INTO knowledge_rag_embeddings (
+        chunk_pk, document_id, chunk_id, model_name, dimensions, vector_blob, norm, created_at
+      ) VALUES (
+        @chunk_pk, @document_id, @chunk_id, @model_name, @dimensions, @vector_blob, @norm, @created_at
+      )
+      ON CONFLICT(document_id, chunk_id, model_name) DO UPDATE SET
+        chunk_pk = excluded.chunk_pk,
+        dimensions = excluded.dimensions,
+        vector_blob = excluded.vector_blob,
+        norm = excluded.norm,
+        created_at = excluded.created_at
+    `);
+    const deleteAll = db.prepare('DELETE FROM knowledge_rag_embeddings WHERE document_id = ? AND model_name = ?');
+    const tx = db.transaction((rows) => {
+      deleteAll.run(documentId, modelName);
+      rows.forEach((record) => {
+        const buffer = embeddingService.serializeVector(record.vector);
+        insert.run({
+          chunk_pk: Number(record.chunk_pk) || 0,
+          document_id: documentId,
+          chunk_id: String(record.chunk_id),
+          model_name: String(modelName),
+          dimensions: Number(record.dimensions || dimensions || record.vector.length),
+          vector_blob: buffer,
+          norm: embeddingService.normalizeVector(record.vector).norm,
+          created_at: timestamp,
+        });
+      });
+    });
+    tx(records);
+
+    updateDocument(documentId, {
+      chunk_count: records.length,
+      embedded_chunk_count: records.length,
+      embedding_model: modelName,
+      embedding_dimensions: Number(dimensions || records[0]?.vector.length || 0),
+      embedding_updated_at: timestamp,
+      status: 'success',
+      progress: 100,
+      message: `已生成 ${records.length} 个向量`,
+    });
+  }
+
+  function clearRagEmbeddings(documentId, modelName) {
+    if (modelName) {
+      db.prepare('DELETE FROM knowledge_rag_embeddings WHERE document_id = ? AND model_name = ?').run(documentId, modelName);
+    } else {
+      db.prepare('DELETE FROM knowledge_rag_embeddings WHERE document_id = ?').run(documentId);
+    }
+  }
+
+  function readAllRagEmbeddings() {
+    if (!embeddingService) return [];
+    const rows = db.prepare(`
+      SELECT
+        e.document_id,
+        e.chunk_id,
+        e.chunk_pk,
+        e.model_name,
+        e.dimensions,
+        e.vector_blob,
+        e.norm,
+        c.heading_path_json,
+        c.content
+      FROM knowledge_rag_embeddings e
+      LEFT JOIN knowledge_rag_chunks c ON c.document_id = e.document_id AND c.chunk_id = e.chunk_id
+    `).all();
+    return rows.map((row) => ({
+      documentId: row.document_id,
+      chunkId: row.chunk_id,
+      chunkPk: Number(row.chunk_pk) || 0,
+      modelName: row.model_name,
+      dimensions: Number(row.dimensions),
+      vector: embeddingService.deserializeVector(row.vector_blob, Number(row.dimensions)),
+      norm: Number(row.norm),
+      headingPath: safeJsonParse(row.heading_path_json, null),
+      content: row.content || '',
+    }));
+  }
+
+  function listRagReferences(documentIds) {
+    const ids = (Array.isArray(documentIds) ? documentIds : []).map((id) => String(id || '')).filter(Boolean);
+    if (!ids.length) return [];
+    const placeholders = ids.map(() => '?').join(',');
+    const rows = db.prepare(`
+      SELECT d.document_id, d.file_name, d.folder_id, d.chunk_count, d.embedded_chunk_count, d.embedding_model,
+             f.mode AS folder_mode, f.name AS folder_name
+      FROM knowledge_documents d
+      LEFT JOIN knowledge_folders f ON f.folder_id = d.folder_id
+      WHERE d.document_id IN (${placeholders})
+    `).all(...ids);
+    return rows.map((row) => ({
+      documentId: row.document_id,
+      fileName: row.file_name,
+      folderId: row.folder_id,
+      folderName: row.folder_name || '未分类',
+      folderMode: normalizeFolderMode(row.folder_mode),
+      chunkCount: Number(row.chunk_count || 0),
+      embeddedChunkCount: Number(row.embedded_chunk_count || 0),
+      embeddingModel: row.embedding_model || undefined,
+    }));
+  }
+
   ensureBaseDir();
 
   return {
@@ -1402,6 +1652,14 @@ function createKnowledgeBaseStore({ app, db }) {
     getMigrationStatus,
     migrateLegacy,
     resolvePath,
+    saveRagChunks,
+    readRagChunks,
+    saveRagEmbeddings,
+    clearRagEmbeddings,
+    readAllRagEmbeddings,
+    listRagReferences,
+    getRagConfig,
+    getFileParserConfig,
   };
 }
 

@@ -3,7 +3,7 @@ const path = require('node:path');
 const Database = require('better-sqlite3');
 const { getWorkspaceDatabasePath } = require('../utils/paths.cjs');
 
-const schemaVersion = 12;
+const schemaVersion = 13;
 
 function createInitialSchema(db) {
   db.exec(`
@@ -834,6 +834,46 @@ function createKnowledgeBaseSchema(db) {
   `);
 }
 
+function addKnowledgeRagSchema(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS knowledge_rag_chunks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      document_id TEXT NOT NULL,
+      chunk_id TEXT NOT NULL,
+      heading_path_json TEXT,
+      content TEXT NOT NULL,
+      content_chars INTEGER NOT NULL DEFAULT 0,
+      token_estimate INTEGER NOT NULL DEFAULT 0,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (document_id) REFERENCES knowledge_documents(document_id) ON DELETE CASCADE,
+      UNIQUE(document_id, chunk_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_knowledge_rag_chunks_document
+    ON knowledge_rag_chunks(document_id, sort_order);
+
+    CREATE TABLE IF NOT EXISTS knowledge_rag_embeddings (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      chunk_pk INTEGER NOT NULL,
+      document_id TEXT NOT NULL,
+      chunk_id TEXT NOT NULL,
+      model_name TEXT NOT NULL,
+      dimensions INTEGER NOT NULL,
+      vector_blob BLOB NOT NULL,
+      norm REAL NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (chunk_pk) REFERENCES knowledge_rag_chunks(id) ON DELETE CASCADE,
+      FOREIGN KEY (document_id) REFERENCES knowledge_documents(document_id) ON DELETE CASCADE,
+      UNIQUE(document_id, chunk_id, model_name)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_knowledge_rag_embeddings_document
+    ON knowledge_rag_embeddings(document_id, model_name);
+  `);
+}
+
 const schemaHealthTableGroups = [
   {
     version: 1,
@@ -903,6 +943,11 @@ const schemaHealthTableGroups = [
     version: 4,
     tables: ['technical_plan_global_fact_groups'],
     repair: createTechnicalPlanGlobalFactsSchema,
+  },
+  {
+    version: 13,
+    tables: ['knowledge_rag_chunks', 'knowledge_rag_embeddings'],
+    repair: addKnowledgeRagSchema,
   },
 ];
 
@@ -1010,6 +1055,26 @@ const schemaHealthColumnGroups = [
     table: 'rejection_check_logic_findings',
     columns: {
       bid_document_id: 'TEXT',
+    },
+  },
+  {
+    version: 13,
+    table: 'knowledge_folders',
+    columns: {
+      mode: "TEXT NOT NULL DEFAULT 'extraction'",
+      embedding_model: 'TEXT',
+      embedding_dimensions: 'INTEGER',
+    },
+  },
+  {
+    version: 13,
+    table: 'knowledge_documents',
+    columns: {
+      chunk_count: 'INTEGER NOT NULL DEFAULT 0',
+      embedded_chunk_count: 'INTEGER NOT NULL DEFAULT 0',
+      embedding_model: 'TEXT',
+      embedding_dimensions: 'INTEGER',
+      embedding_updated_at: 'TEXT',
     },
   },
 ];
@@ -1132,6 +1197,11 @@ const migrations = [
     version: 12,
     description: '废标项检查支持多份投标文件',
     up: migrateRejectionCheckMultiBidDocuments,
+  },
+  {
+    version: 13,
+    description: '知识库新增 RAG 检索模式（文件夹 mode + chunks/embeddings 表）',
+    up: addKnowledgeRagSchema,
   },
 ];
 

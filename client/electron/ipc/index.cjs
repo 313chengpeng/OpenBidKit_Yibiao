@@ -9,6 +9,9 @@ const { registerRejectionCheckIpc } = require('./rejectionCheckIpc.cjs');
 const { registerTaskIpc } = require('./taskIpc.cjs');
 const { registerTechnicalPlanIpc } = require('./technicalPlanIpc.cjs');
 const { createAiService } = require('../services/aiService.cjs');
+const { createEmbeddingService } = require('../services/embeddingService.cjs');
+const { createVectorIndexService } = require('../services/vectorIndexService.cjs');
+const { createRagService } = require('../services/ragService.cjs');
 const { createConfigStore } = require('../services/configStore.cjs');
 const { createDuplicateCheckService } = require('../services/duplicateCheckService.cjs');
 const { createDuplicateCheckStore } = require('../services/duplicateCheckStore.cjs');
@@ -141,10 +144,12 @@ function registerWorkspaceDatabaseStatusIpc({ mainWindow }) {
   };
 }
 
-function registerWorkspaceDatabaseServices({ app, configStore, aiService, fileService, updateStatus }) {
+function registerWorkspaceDatabaseServices({ app, configStore, aiService, fileService, embeddingService, updateStatus }) {
   const sqliteDatabase = createSqliteDatabase(app, { onStatus: updateStatus });
-  const knowledgeBaseStore = createKnowledgeBaseStore({ app, db: sqliteDatabase.db });
-  const knowledgeBaseService = createKnowledgeBaseService({ app, aiService, configStore, knowledgeBaseStore });
+  const knowledgeBaseStore = createKnowledgeBaseStore({ app, db: sqliteDatabase.db, configStore, embeddingService });
+  const vectorIndexService = createVectorIndexService();
+  const ragService = createRagService({ app, knowledgeBaseStore, embeddingService, vectorIndexService });
+  const knowledgeBaseService = createKnowledgeBaseService({ app, aiService, configStore, knowledgeBaseStore, ragService, vectorIndexService });
   const technicalPlanStore = createTechnicalPlanStore({ app, db: sqliteDatabase.db, fileService });
   const duplicateCheckStore = createDuplicateCheckStore({ app, db: sqliteDatabase.db });
   const rejectionCheckStore = createRejectionCheckStore({ app, db: sqliteDatabase.db, fileService, technicalPlanStore });
@@ -164,6 +169,7 @@ function registerWorkspaceDatabaseServices({ app, configStore, aiService, fileSe
 function registerIpcHandlers({ app, mainWindow, checkAndDownloadUpdate, triggerUpdateDownload, quitAndInstall, getLatestVersion, getUpdateDownloadUrl, gpuStartupState = {}, gpuTrialArg = '--yibiao-trial-hardware-acceleration', forceDisableGpuArgs = [] }) {
   const configStore = createConfigStore(app);
   const aiService = createAiService({ app, configStore });
+  const embeddingService = createEmbeddingService({ app, configStore });
   const fileService = createFileService({ app, configStore });
   const exportService = createExportService({ configStore });
   const databaseStatus = registerWorkspaceDatabaseStatusIpc({ mainWindow });
@@ -203,7 +209,7 @@ function registerIpcHandlers({ app, mainWindow, checkAndDownloadUpdate, triggerU
   };
 
   registerConfigIpc({ configStore, aiService });
-  registerAiIpc({ aiService });
+  registerAiIpc({ aiService, embeddingService });
   registerFileIpc({ fileService });
   registerExportIpc({ exportService });
   registerPendingWorkspaceDatabaseIpc(databaseStatus.getStatus);
@@ -214,7 +220,7 @@ function registerIpcHandlers({ app, mainWindow, checkAndDownloadUpdate, triggerU
     databaseStatus.updateStatus({ phase: 'checking', ready: false, message: '正在检查本地数据库' });
     setTimeout(() => {
       try {
-        registerWorkspaceDatabaseServices({ app, configStore, aiService, fileService, updateStatus: databaseStatus.updateStatus });
+        registerWorkspaceDatabaseServices({ app, configStore, aiService, fileService, embeddingService, updateStatus: databaseStatus.updateStatus });
       } catch (error) {
         databaseStatus.updateStatus({
           phase: 'error',

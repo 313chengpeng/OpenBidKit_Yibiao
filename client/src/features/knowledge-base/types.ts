@@ -93,11 +93,16 @@ export interface KnowledgeBaseIndexMutationResult extends KnowledgeBaseMutationR
   document?: KnowledgeDocument;
 }
 
-export type KnowledgeDocumentStatus = 'pending' | 'copying' | 'converting' | 'extracting' | 'ready_for_matching' | 'matching' | 'recovering' | 'analyzing' | 'saving' | 'success' | 'error';
+export type KnowledgeDocumentStatus = 'pending' | 'copying' | 'converting' | 'chunking' | 'embedding' | 'extracting' | 'ready_for_matching' | 'matching' | 'recovering' | 'analyzing' | 'saving' | 'success' | 'error';
+
+export type KnowledgeFolderMode = 'extraction' | 'rag';
 
 export interface KnowledgeFolder {
   id: string;
   name: string;
+  mode: KnowledgeFolderMode;
+  embedding_model?: string;
+  embedding_dimensions?: number;
   sort_order?: number;
   created_at: string;
   updated_at: string;
@@ -117,10 +122,53 @@ export interface KnowledgeDocument {
   discarded_block_count?: number;
   system_discarded_after_retry_count?: number;
   last_batch_size?: number;
+  chunk_count?: number;
+  embedded_chunk_count?: number;
+  embedding_model?: string;
+  embedding_dimensions?: number;
+  embedding_updated_at?: string;
   sort_order?: number;
   created_at: string;
   updated_at: string;
   error?: string;
+}
+
+export interface KnowledgeRagChunk {
+  id: number;
+  document_id: string;
+  chunk_id: string;
+  heading_path: string[] | null;
+  content: string;
+  content_chars: number;
+  token_estimate: number;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface KnowledgeRagSearchResult {
+  documentId: string;
+  chunkId: string;
+  chunkPk: number;
+  modelName: string;
+  content: string;
+  headingPath: string[] | null;
+  score: number;
+}
+
+export interface KnowledgeRagReference {
+  documentId: string;
+  fileName: string;
+  folderId: string;
+  folderName: string;
+  folderMode: KnowledgeFolderMode;
+  chunkCount: number;
+  embeddedChunkCount: number;
+  embeddingModel?: string;
+}
+
+export interface KnowledgeRagStats {
+  size: number;
 }
 
 export interface KnowledgeBaseIndex {

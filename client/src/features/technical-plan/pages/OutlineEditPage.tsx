@@ -1,10 +1,10 @@
 import * as Dialog from '@radix-ui/react-dialog';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, DragEvent } from 'react';
 import { trackConfigUsage } from '../../../shared/analytics/analytics';
 import { useToast } from '../../../shared/ui';
 import type { BackgroundTaskState, SaveOutlineRequest } from '../types';
-import type { KnowledgeBaseIndex, KnowledgeDocument } from '../../knowledge-base/types';
+import type { KnowledgeBaseIndex, KnowledgeDocument, KnowledgeFolder, KnowledgeFolderMode } from '../../knowledge-base/types';
 import type { OutlineData, OutlineItem, OutlineMode } from '../../../shared/types';
 import type { ExportFormatConfig } from '../../../shared/types/exportFormat';
 import { DEFAULT_EXPORT_FORMAT } from '../../../shared/types/exportFormat';
@@ -52,6 +52,18 @@ const outlineModeLabels: Record<OutlineMode, string> = {
   free: '自由生成',
   aligned: '按评分项对齐',
 };
+
+const knowledgeFolderModeLabels: Record<KnowledgeFolderMode, string> = {
+  extraction: '条目匹配',
+  rag: 'RAG 检索',
+};
+
+const DEFAULT_RAG_TOPK = 6;
+
+interface RagFolderConfig {
+  query: string;
+  topK: number;
+}
 
 function collectOutlineIds(items: OutlineItem[], ids = new Set<string>()) {
   items.forEach((item) => {
@@ -230,6 +242,7 @@ function OutlineEditPage({
   const [expandedKnowledgeFolderIds, setExpandedKnowledgeFolderIds] = useState<Set<string>>(new Set());
   const [knowledgeIndex, setKnowledgeIndex] = useState<KnowledgeBaseIndex>(emptyKnowledgeIndex);
   const [loadingKnowledge, setLoadingKnowledge] = useState(false);
+  const [ragFolderConfigs, setRagFolderConfigs] = useState<Record<string, RagFolderConfig>>({});
   const [localStartAt, setLocalStartAt] = useState<number | null>(null);
   const [nowTick, setNowTick] = useState(() => Date.now());
   const [sorting, setSorting] = useState(false);
@@ -386,9 +399,11 @@ function OutlineEditPage({
       setNowTick(startedNow);
       onOutlineConfigChange(draftOutlineMode, draftKnowledgeDocumentIds);
       setGenerationDialogOpen(false);
+      const ragFolderConfigs = buildRagFolderConfigsPayload();
       await window.yibiao?.tasks.startOutlineGeneration({
         mode: draftOutlineMode,
         reference_knowledge_document_ids: draftKnowledgeDocumentIds,
+        rag_folder_configs: ragFolderConfigs,
       });
       trackConfigUsage({ outline_mode: draftOutlineMode });
       showToast('目录生成任务已在后台启动', 'success');
@@ -397,6 +412,26 @@ function OutlineEditPage({
       setLocalStartAt(null);
       showToast(error instanceof Error ? error.message : '启动目录生成任务失败', 'error');
     }
+  };
+
+  const buildRagFolderConfigsPayload = () => {
+    const payload: Array<{ folderId: string; folderName: string; query: string; topK: number }> = [];
+    knowledgeIndex.folders.forEach((folder) => {
+      if (folder.mode !== 'rag') return;
+      const hasDocumentSelected = draftKnowledgeDocumentIds.some((documentId) => {
+        const document = knowledgeIndex.documents.find((item) => item.id === documentId);
+        return document?.folder_id === folder.id;
+      });
+      if (!hasDocumentSelected) return;
+      const config = getRagFolderConfig(folder.id);
+      payload.push({
+        folderId: folder.id,
+        folderName: folder.name,
+        query: config.query,
+        topK: config.topK,
+      });
+    });
+    return payload;
   };
 
   const toggleDraftKnowledgeDocument = (document: KnowledgeDocument) => {
@@ -410,6 +445,18 @@ function OutlineEditPage({
         : [...prev, document.id]
     ));
   };
+
+  const updateRagFolderConfig = (folderId: string, partial: Partial<RagFolderConfig>) => {
+    setRagFolderConfigs((prev) => {
+      const current = prev[folderId] || { query: '', topK: DEFAULT_RAG_TOPK };
+      const next = { ...current, ...partial };
+      if (!next.query.trim()) next.query = '';
+      next.topK = Math.max(1, Math.min(50, Math.floor(Number(next.topK) || DEFAULT_RAG_TOPK)));
+      return { ...prev, [folderId]: next };
+    });
+  };
+
+  const getRagFolderConfig = (folderId: string): RagFolderConfig => ragFolderConfigs[folderId] || { query: '', topK: DEFAULT_RAG_TOPK };
 
   const toggleKnowledgeFolder = (folderId: string) => {
     setExpandedKnowledgeFolderIds((prev) => (prev.has(folderId) ? new Set() : new Set([folderId])));
@@ -783,6 +830,8 @@ function OutlineEditPage({
       return documents.length ? [{ folder, documents }] : [];
     });
     const visibleDocumentCount = visibleFolders.reduce((total, group) => total + group.documents.length, 0);
+    const ragFolderCount = visibleFolders.filter(({ folder }) => folder.mode === 'rag').length;
+    const extractionFolderCount = visibleFolders.length - ragFolderCount;
 
     if (!availableDocuments.length) {
       return <div className="outline-knowledge-empty">暂无已完成的知识库文档，可先到知识库上传并处理完成后再选择。</div>;
@@ -797,7 +846,11 @@ function OutlineEditPage({
             onChange={(event) => setKnowledgeSearch(event.target.value)}
             placeholder="搜索文件夹或文档"
           />
-          <span>{keyword ? `匹配 ${visibleDocumentCount} 个文档` : `共 ${availableDocuments.length} 个可用文档`}</span>
+          <span>
+            {keyword
+              ? `匹配 ${visibleDocumentCount} 个文档`
+              : `共 ${availableDocuments.length} 个可用文档（条目 ${extractionFolderCount} / RAG ${ragFolderCount}）`}
+          </span>
         </div>
         <div className="outline-knowledge-grid">
           <div className="outline-knowledge-browser">
@@ -809,13 +862,16 @@ function OutlineEditPage({
               {visibleFolders.length ? visibleFolders.map(({ folder, documents }) => {
                 const expanded = keyword ? true : expandedKnowledgeFolderIds.has(folder.id);
                 const selectedCount = documents.filter((document) => draftKnowledgeDocumentIds.includes(document.id)).length;
+                const isRag = folder.mode === 'rag';
+                const ragConfig = isRag ? getRagFolderConfig(folder.id) : null;
 
                 return (
-                  <section className="outline-knowledge-folder compact" key={folder.id}>
+                  <section className={`outline-knowledge-folder compact is-mode-${folder.mode}`} key={folder.id}>
                     <div className="outline-knowledge-folder-head compact">
                       <button type="button" onClick={() => toggleKnowledgeFolder(folder.id)} disabled={Boolean(keyword)} aria-expanded={expanded}>
                         <span>{expanded ? '▾' : '▸'}</span>
                         <strong>{folder.name}</strong>
+                        <em className={`outline-knowledge-folder-mode is-${folder.mode}`}>{knowledgeFolderModeLabels[folder.mode]}</em>
                       </button>
                       <small>{documents.length} 个 / 已选 {selectedCount}</small>
                       <div className="outline-knowledge-folder-actions">
@@ -837,10 +893,42 @@ function OutlineEditPage({
                                 onChange={() => toggleDraftKnowledgeDocument(document)}
                               />
                               <strong title={document.file_name}>{document.file_name}</strong>
-                              <small>{document.item_count || 0} 条</small>
+                              <small>
+                                {isRag
+                                  ? `${document.embedded_chunk_count || 0}/${document.chunk_count || 0} 向量化`
+                                  : `${document.item_count || 0} 条`}
+                              </small>
                             </label>
                           );
                         })}
+                        {isRag && ragConfig && (
+                          <div className="outline-knowledge-rag-config compact">
+                            <label>
+                              <span>查询语句</span>
+                              <textarea
+                                rows={2}
+                                value={ragConfig.query}
+                                placeholder="留空将自动使用项目概述和技术要求"
+                                disabled={generating}
+                                onChange={(event) => updateRagFolderConfig(folder.id, { query: event.target.value })}
+                              />
+                            </label>
+                            <label className="outline-knowledge-rag-topk">
+                              <span>TopK</span>
+                              <input
+                                type="number"
+                                min={1}
+                                max={50}
+                                value={ragConfig.topK}
+                                disabled={generating}
+                                onChange={(event) => updateRagFolderConfig(folder.id, { topK: Number(event.target.value) || DEFAULT_RAG_TOPK })}
+                              />
+                            </label>
+                            <p className="outline-knowledge-rag-hint">
+                              RAG 文件夹会按 query 在已向量化的 chunk 中检索前 {ragConfig.topK} 段内容作为目录参考。
+                            </p>
+                          </div>
+                        )}
                       </div>
                     )}
                   </section>
@@ -855,12 +943,23 @@ function OutlineEditPage({
             </div>
             {selectedDocuments.length ? (
               <div className="outline-knowledge-selected-list">
-                {selectedDocuments.map((document) => (
-                  <div className="outline-knowledge-selected-item" key={document.id}>
-                    <strong title={document.file_name}>{document.file_name}</strong>
-                    <button type="button" onClick={() => removeDraftKnowledgeDocument(document.id)} disabled={generating}>移除</button>
-                  </div>
-                ))}
+                {selectedDocuments.map((document) => {
+                  const folder = knowledgeIndex.folders.find((item) => item.id === document.folder_id);
+                  const isRag = folder?.mode === 'rag';
+                  return (
+                    <div className="outline-knowledge-selected-item" key={document.id}>
+                      <div>
+                        <strong title={document.file_name}>{document.file_name}</strong>
+                        {folder && (
+                          <small className={`outline-knowledge-folder-mode is-${folder.mode}`}>
+                            {knowledgeFolderModeLabels[folder.mode]}
+                          </small>
+                        )}
+                      </div>
+                      <button type="button" onClick={() => removeDraftKnowledgeDocument(document.id)} disabled={generating}>移除</button>
+                    </div>
+                  );
+                })}
               </div>
             ) : (
               <div className="outline-knowledge-empty compact">未选择知识库文档</div>

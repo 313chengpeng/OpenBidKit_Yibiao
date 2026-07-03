@@ -1,4 +1,13 @@
-import type { FileParserConfig, ImageModelConfig, ImageModelProfiles, TextModelConfig, TextModelProfiles, TextModelProvider, UpdateChannel } from '../../shared/types';
+import type {
+  EmbeddingModelConfig,
+  FileParserConfig,
+  ImageModelConfig,
+  ImageModelProfiles,
+  TextModelConfig,
+  TextModelProfiles,
+  TextModelProvider,
+  UpdateChannel,
+} from '../../shared/types';
 
 export interface SettingsPageState {
   textModel: Omit<TextModelConfig, 'context_length_limit' | 'concurrency_limit'> & {
@@ -11,6 +20,10 @@ export interface SettingsPageState {
     concurrency_limit: number | '';
   };
   imageModelProfiles: ImageModelProfiles;
+  embeddingModel: Omit<EmbeddingModelConfig, 'dimensions' | 'batch_size'> & {
+    dimensions: number | '';
+    batch_size: number | '';
+  };
   fileParser: FileParserConfig;
   general: {
     developer_mode: boolean;

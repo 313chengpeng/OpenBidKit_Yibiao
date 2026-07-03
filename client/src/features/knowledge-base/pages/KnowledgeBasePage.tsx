@@ -3,7 +3,7 @@ import * as Dialog from '@radix-ui/react-dialog';
 import type { Components } from 'react-markdown';
 import { trackPageView } from '../../../shared/analytics/analytics';
 import { isLibreOfficeRequiredMessage, MarkdownRenderer, useDocumentParseNotice, useToast } from '../../../shared/ui';
-import type { KnowledgeAnalysisSnapshot, KnowledgeBaseIndex, KnowledgeBaseMigrationStatus, KnowledgeDocument, KnowledgeItem } from '../types';
+import type { KnowledgeAnalysisSnapshot, KnowledgeBaseIndex, KnowledgeBaseMigrationStatus, KnowledgeDocument, KnowledgeFolderMode, KnowledgeItem } from '../types';
 
 declare global {
   interface Window {
@@ -27,6 +27,8 @@ const statusLabels: Record<KnowledgeDocument['status'], string> = {
   pending: '等待处理',
   copying: '复制文件',
   converting: '转换 Markdown',
+  chunking: '切分 Chunk',
+  embedding: '生成向量',
   extracting: '提取条目',
   ready_for_matching: '待匹配',
   matching: '匹配段落',
@@ -35,6 +37,16 @@ const statusLabels: Record<KnowledgeDocument['status'], string> = {
   saving: '保存结果',
   success: '完成',
   error: '失败',
+};
+
+const knowledgeFolderModeLabels: Record<KnowledgeFolderMode, string> = {
+  extraction: '条目匹配',
+  rag: 'RAG 检索',
+};
+
+const knowledgeFolderModeDescriptions: Record<KnowledgeFolderMode, string> = {
+  extraction: 'AI 抽取知识条目 + 段落匹配（默认模式）',
+  rag: '文档切分 Chunk 并向量化，按查询实时检索相关片段',
 };
 
 type RenderDebugKind = 'item-source' | 'document-markdown' | 'document-items';
@@ -323,6 +335,7 @@ function KnowledgeBasePage() {
   const [developerMode, setDeveloperMode] = useState(false);
   const [showCreateFolder, setShowCreateFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
+  const [newFolderMode, setNewFolderMode] = useState<KnowledgeFolderMode>('extraction');
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [retryingDocumentIds, setRetryingDocumentIds] = useState<Set<string>>(() => new Set());
   const [visibleDocumentCount, setVisibleDocumentCount] = useState(documentRenderBatchSize);
@@ -628,13 +641,14 @@ function KnowledgeBasePage() {
 
     try {
       setCreatingFolder(true);
-      const folder = await window.yibiao?.knowledgeBase.createFolder(name.trim());
+      const folder = await window.yibiao?.knowledgeBase.createFolder(name.trim(), { mode: newFolderMode });
       if (!folder) return;
       setIndex((prev) => ({ ...prev, folders: [...prev.folders, folder] }));
       setActiveFolderId(folder.id);
       setNewFolderName('');
+      setNewFolderMode('extraction');
       setShowCreateFolder(false);
-      showToast('文件夹已创建', 'success');
+      showToast(folder.mode === 'rag' ? 'RAG 文件夹已创建，可上传文档后自动向量化' : '文件夹已创建', 'success');
     } catch (error) {
       showToast(error instanceof Error ? error.message : '创建文件夹失败', 'error');
     } finally {
@@ -997,12 +1011,40 @@ function KnowledgeBasePage() {
             placeholder="输入文件夹名称"
             disabled={migrationRunning}
           />
+          <div className="knowledge-create-folder-mode" role="radiogroup" aria-label="知识库文件夹模式">
+            <button
+              type="button"
+              role="radio"
+              aria-checked={newFolderMode === 'extraction'}
+              className={`knowledge-folder-mode-card${newFolderMode === 'extraction' ? ' is-active' : ''}`}
+              onClick={() => setNewFolderMode('extraction')}
+              disabled={migrationRunning}
+              title={knowledgeFolderModeDescriptions.extraction}
+            >
+              <strong>条目匹配</strong>
+              <span>AI 抽条目</span>
+            </button>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={newFolderMode === 'rag'}
+              className={`knowledge-folder-mode-card${newFolderMode === 'rag' ? ' is-active' : ''}`}
+              onClick={() => setNewFolderMode('rag')}
+              disabled={migrationRunning}
+              title={knowledgeFolderModeDescriptions.rag}
+            >
+              <strong>RAG 检索</strong>
+              <span>向量化</span>
+            </button>
+          </div>
+          <small className="knowledge-create-folder-hint">{knowledgeFolderModeDescriptions[newFolderMode]}</small>
           <button type="submit" className="primary-action" disabled={creatingFolder || migrationRunning}>{creatingFolder ? '创建中...' : '创建'}</button>
           <button
             type="button"
             className="secondary-action"
             onClick={() => {
               setNewFolderName('');
+              setNewFolderMode('extraction');
               setShowCreateFolder(false);
             }}
           >
@@ -1068,7 +1110,14 @@ function KnowledgeBasePage() {
 
         <main className="knowledge-document-panel">
           <div className="knowledge-panel-head">
-            <strong>{activeFolder?.name || '未选择文件夹'}</strong>
+            <div className="knowledge-panel-head-title">
+              <strong>{activeFolder?.name || '未选择文件夹'}</strong>
+              {activeFolder && (
+                <span className={`knowledge-folder-mode-badge is-${activeFolder.mode}`}>
+                  {knowledgeFolderModeLabels[activeFolder.mode]}
+                </span>
+              )}
+            </div>
             <span>{documents.length} 个文档</span>
           </div>
 
@@ -1113,9 +1162,19 @@ function KnowledgeBasePage() {
                     </div>
                     <div className="knowledge-document-meta">
                       <span>{document.message}</span>
-                      <span>{document.item_count || 0} 条知识</span>
-                      <span>{document.candidate_item_count || 0} 个候选</span>
-                      <span>{document.block_count || 0} 个 block</span>
+                      {activeFolder?.mode === 'rag' ? (
+                        <>
+                          <span>{document.chunk_count || 0} 个 Chunk</span>
+                          <span>已向量 {document.embedded_chunk_count || 0}</span>
+                          {document.embedding_model && <span>模型：{document.embedding_model}</span>}
+                        </>
+                      ) : (
+                        <>
+                          <span>{document.item_count || 0} 条知识</span>
+                          <span>{document.candidate_item_count || 0} 个候选</span>
+                          <span>{document.block_count || 0} 个 block</span>
+                        </>
+                      )}
                     </div>
                     <div className="knowledge-document-actions">
                       {developerMode && <button type="button" onClick={() => void openDocument(document, 'analysis')} disabled={migrationRunning || !canOpenAnalysis(document)}>分析调试</button>}

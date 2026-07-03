@@ -41,6 +41,22 @@ export interface ImageModelTestResult {
 export type ImageModelProvider = 'jinlong' | 'volcengine' | 'google-ai-studio' | 'custom';
 export type ImageModelStatus = 'untested' | 'available' | 'unavailable';
 
+export type EmbeddingModelProvider = 'openai-compatible' | 'volcengine' | 'custom';
+export type EmbeddingModelStatus = 'untested' | 'available' | 'unavailable';
+
+export interface EmbeddingModelConfig {
+  provider: EmbeddingModelProvider;
+  base_url: string;
+  api_key: string;
+  model_name: string;
+  dimensions: number;
+  batch_size: number;
+  request_mode: AiRequestMode;
+  status?: EmbeddingModelStatus;
+  tested_at?: string;
+  last_error?: string;
+}
+
 export interface ImageModelConfig {
   provider: ImageModelProvider;
   base_url?: string;
@@ -65,6 +81,7 @@ export interface FileParserConfig {
 export interface ClientConfig extends AiConfig {
   image_model: ImageModelConfig;
   image_model_profiles: ImageModelProfiles;
+  embedding_model: EmbeddingModelConfig;
   file_parser: FileParserConfig;
   update_channel?: UpdateChannel;
   gpu_hardware_acceleration_enabled?: boolean;

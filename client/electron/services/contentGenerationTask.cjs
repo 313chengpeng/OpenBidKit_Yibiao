@@ -2228,6 +2228,163 @@ function loadContentKnowledgeItems(knowledgeBaseService, documentIds, log) {
   }
 }
 
+function partitionContentReferenceDocuments(knowledgeBaseService, documentIds) {
+  if (!knowledgeBaseService?.listRagReferences) {
+    return { extractionIds: documentIds.slice(), ragIds: [] };
+  }
+  try {
+    const refs = knowledgeBaseService.listRagReferences(documentIds) || [];
+    const ragSet = new Set(refs.filter((ref) => ref.folderMode === 'rag').map((ref) => ref.documentId));
+    const extractionIds = [];
+    const ragIds = [];
+    for (const id of documentIds) {
+      if (ragSet.has(id)) ragIds.push(id);
+      else extractionIds.push(id);
+    }
+    return { extractionIds, ragIds };
+  } catch (error) {
+    return { extractionIds: documentIds.slice(), ragIds: [] };
+  }
+}
+
+const CONTENT_RAG_TOP_K = 4;
+const CONTENT_RAG_MAX_CONTENT_CHARS = 1200;
+const CONTENT_RAG_QUERY_MAX_CHARS = 1600;
+
+function buildContentRagQuery({ node, overview, requirements }) {
+  const title = node?.title ? `章节：${String(node.title).trim()}` : '';
+  const description = node?.description ? `描述：${String(node.description).trim()}` : '';
+  const overviewPart = overview ? `项目概述：${String(overview).trim()}` : '';
+  const requirementsPart = requirements ? `技术要求：${String(requirements).trim()}` : '';
+  const query = [title, description, overviewPart, requirementsPart]
+    .filter(Boolean)
+    .join('\n')
+    .slice(0, CONTENT_RAG_QUERY_MAX_CHARS)
+    .trim();
+  return query || '项目相关历史资料';
+}
+
+function summarizeContentRagChunk(content) {
+  return String(content || '').replace(/\s+/g, ' ').trim().slice(0, CONTENT_RAG_MAX_CONTENT_CHARS);
+}
+
+function headingToContentRagTitle(headingPath, fallback) {
+  if (Array.isArray(headingPath) && headingPath.length) {
+    return headingPath.filter(Boolean).join(' > ');
+  }
+  return fallback || 'RAG 检索片段';
+}
+
+function dedupeContentRagReferences(items) {
+  const seen = new Set();
+  const out = [];
+  for (const item of items) {
+    const key = `${item.document_id || ''}::${item.chunk_id || ''}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(item);
+  }
+  return out;
+}
+
+async function loadContentRagReferences(knowledgeBaseService, documentIds, query, log, ragGroups = null) {
+  if (!documentIds.length) return [];
+  if (!knowledgeBaseService?.searchRag) {
+    log('RAG 服务未启用，跳过 RAG 检索。');
+    return [];
+  }
+  const groups = (ragGroups && ragGroups.length)
+    ? ragGroups
+    : [{ documentIds, topK: CONTENT_RAG_TOP_K, query }];
+  const collected = [];
+  try {
+    for (const group of groups) {
+      if (!group.documentIds?.length) continue;
+      const topK = Math.max(1, Math.min(50, Math.floor(Number(group.topK) || CONTENT_RAG_TOP_K)));
+      const groupQuery = (group.query || query || '').trim();
+      const folderLabel = group.folderName ? `「${group.folderName}」` : 'RAG';
+      const results = await knowledgeBaseService.searchRag(groupQuery, {
+        documentIds: group.documentIds,
+        topK,
+      });
+      if (!Array.isArray(results) || !results.length) {
+        log(`${folderLabel} 检索未命中任何片段。`);
+        continue;
+      }
+      const items = results.map((result, index) => ({
+        id: `${result.documentId}::${result.chunkId}`,
+        document_id: result.documentId,
+        chunk_id: result.chunkId,
+        title: headingToContentRagTitle(result.headingPath, `匹配片段 ${collected.length + index + 1}`),
+        resume: summarizeContentRagChunk(result.content),
+        content: summarizeContentRagChunk(result.content),
+        score: result.score,
+        source_kind: 'rag',
+      }));
+      collected.push(...items);
+    }
+    if (!collected.length) {
+      log('RAG 检索未命中任何片段。');
+      return [];
+    }
+    log(`RAG 检索命中 ${collected.length} 段，已作为正文参考素材。`);
+    return dedupeContentRagReferences(collected);
+  } catch (error) {
+    log(`RAG 检索失败，将跳过 RAG 资料：${error.message || String(error)}`);
+    return [];
+  }
+}
+
+function buildContentRagGroups(knowledgeBaseService, ragIds, defaultQueryBuilder) {
+  if (!knowledgeBaseService?.listRagReferences) {
+    return [{ documentIds: ragIds, topK: CONTENT_RAG_TOP_K, query: defaultQueryBuilder() }];
+  }
+  try {
+    const refs = knowledgeBaseService.listRagReferences(ragIds) || [];
+    const folderInfo = new Map(refs.map((ref) => [ref.documentId, ref]));
+    const byFolder = new Map();
+    for (const id of ragIds) {
+      const ref = folderInfo.get(id);
+      const folderId = ref?.folderId || '__no_folder__';
+      if (!byFolder.has(folderId)) {
+        byFolder.set(folderId, {
+          folderId,
+          folderName: ref?.folderName || 'RAG',
+          topK: CONTENT_RAG_TOP_K,
+          query: defaultQueryBuilder(),
+          documentIds: [],
+        });
+      }
+      byFolder.get(folderId).documentIds.push(id);
+    }
+    return Array.from(byFolder.values());
+  } catch (error) {
+    return [{ documentIds: ragIds, topK: CONTENT_RAG_TOP_K, query: defaultQueryBuilder() }];
+  }
+}
+
+function applyContentRagGroupOverrides(groups, overrides) {
+  if (!Array.isArray(overrides) || !overrides.length) return groups;
+  const overrideMap = new Map();
+  for (const entry of overrides) {
+    if (!entry || !entry.folderId) continue;
+    overrideMap.set(entry.folderId, {
+      topK: entry.topK,
+      query: entry.query,
+    });
+  }
+  return groups.map((group) => {
+    const override = overrideMap.get(group.folderId);
+    if (!override) return group;
+    return {
+      ...group,
+      topK: override.topK ? Math.max(1, Math.min(50, Math.floor(Number(override.topK) || group.topK))) : group.topK,
+      // Per-chapter query is used at retrieval time; we keep the default folder query here.
+      query: group.query,
+    };
+  });
+}
+
 function loadContentKnowledgeContentMap(knowledgeBaseService, documentIds, log) {
   const map = new Map();
   if (!documentIds.length || !knowledgeBaseService?.readItems) {
@@ -3191,6 +3348,62 @@ async function runContentGenerationTask({ aiService, workspaceStore, knowledgeBa
   knowledgeContentMap = loadContentKnowledgeContentMap(knowledgeBaseService, referenceKnowledgeDocumentIds, (message) => {
     logs = [...logs, message];
   });
+  const { extractionIds: contentExtractionIds, ragIds: contentRagIds } = partitionContentReferenceDocuments(knowledgeBaseService, referenceKnowledgeDocumentIds);
+  const hasRagReferences = contentRagIds.length > 0;
+  if (hasRagReferences) {
+    logs = [...logs, `检测到 ${contentRagIds.length} 个 RAG 模式参考文档，将按章节进行向量检索。`];
+  }
+
+  async function fetchRagItemsForChapter(chapter) {
+    if (!hasRagReferences) return { items: [], contentMap: new Map() };
+    const baseQuery = buildContentRagQuery({
+      node: chapter,
+      overview: projectOverview,
+      requirements: techRequirements,
+    });
+    // Build per-folder groups; chapter query is the base, per-folder user query overrides if present
+    const groups = buildContentRagGroups(knowledgeBaseService, contentRagIds, () => baseQuery);
+    const ragGroups = applyContentRagGroupOverrides(groups, payload.rag_folder_configs);
+    // Per-folder user-supplied query takes precedence over chapter query when present
+    const customizedGroups = ragGroups.map((group) => {
+      const override = (payload.rag_folder_configs || []).find((entry) => entry.folderId === group.folderId);
+      if (override && override.query && override.query.trim()) {
+        return { ...group, query: override.query };
+      }
+      return group;
+    });
+    const items = await loadContentRagReferences(knowledgeBaseService, contentRagIds, baseQuery, (message) => {
+      logs = [...logs, message];
+    }, customizedGroups);
+    const contentMap = new Map();
+    for (const item of items) {
+      contentMap.set(item.id, { content: item.content });
+    }
+    return { items, contentMap };
+  }
+
+  // chapterRagContext: 章节 id -> { items, contentMap }
+  const chapterRagContext = new Map();
+  function getChapterRagContext(chapterId) {
+    return chapterRagContext.get(chapterId) || { items: [], contentMap: new Map() };
+  }
+  function buildChapterKnowledgeView(chapterId, baseItems, baseMap) {
+    const context = getChapterRagContext(chapterId);
+    if (!context.items.length) {
+      return {
+        items: baseItems,
+        allowedIds: new Set(baseItems.map((item) => item.id)),
+        contentMap: baseMap,
+      };
+    }
+    const items = [...baseItems, ...context.items];
+    const allowedIds = new Set(items.map((item) => item.id));
+    const contentMap = new Map(baseMap);
+    for (const [id, value] of context.contentMap.entries()) {
+      contentMap.set(id, value);
+    }
+    return { items, allowedIds, contentMap };
+  }
 
   function getLeafContentForWords(item) {
     return sections[item.id]?.content || item.content || '';
@@ -3525,6 +3738,25 @@ async function runContentGenerationTask({ aiService, workspaceStore, knowledgeBa
     const { item, parentChapters, siblingChapters } = context;
     let contentPlan;
 
+    let chapterView = {
+      items: knowledgeItems,
+      allowedIds: allowedKnowledgeItemIds,
+      contentMap: knowledgeContentMap,
+    };
+    if (hasRagReferences) {
+      try {
+        const ragContext = await fetchRagItemsForChapter(item);
+        chapterRagContext.set(item.id, ragContext);
+        chapterView = buildChapterKnowledgeView(item.id, knowledgeItems, knowledgeContentMap);
+        if (ragContext.items.length) {
+          logs = [...logs, `RAG 检索：${item.id} ${item.title || ''} 命中 ${ragContext.items.length} 段。`];
+        }
+      } catch (error) {
+        if (isPauseLikeError(error)) throw error;
+        logs = [...logs, `RAG 检索失败：${item.id} ${item.title || ''}，${error.message || String(error)}。`];
+      }
+    }
+
     try {
       contentPlan = await aiService.collectJsonResponse({
         messages: buildChapterContentPlanMessages({
@@ -3542,20 +3774,20 @@ async function runContentGenerationTask({ aiService, workspaceStore, knowledgeBa
           mermaidGenerationAvailable: mermaidImagesEnabled,
           maxAiImages: runLimits.maxAiImagesForRun,
           totalSections: tasksToRun.length,
-          knowledgeItems,
+          knowledgeItems: chapterView.items,
         }),
         temperature: 0.2,
         logTitle: `正文编排-${item.id}-${item.title || '未命名章节'}`,
         progressLabel: '正文编排决策',
         failureMessage: '模型返回的正文编排决策格式无效',
-        normalizer: (value) => normalizeContentPlan(value, allowedKnowledgeItemIds, allowedFactTitles),
+        normalizer: (value) => normalizeContentPlan(value, chapterView.allowedIds, allowedFactTitles),
         validator: validateContentPlan,
       });
     } catch (error) {
       if (isPauseLikeError(error)) {
         throw error;
       }
-      contentPlan = normalizeContentPlan({}, allowedKnowledgeItemIds, allowedFactTitles);
+      contentPlan = normalizeContentPlan({}, chapterView.allowedIds, allowedFactTitles);
       logs = [...logs, `编排失败：${item.id} ${item.title || '未命名章节'}，${error.message || '模型返回无效'}，将按纯正文生成。`];
     }
 
@@ -3783,7 +4015,23 @@ async function runContentGenerationTask({ aiService, workspaceStore, knowledgeBa
       contentPlan = getContentPlanForItem(item.id);
       originalState = getOriginalMaterialRuntimeState(item);
       originalMaterial = originalState.originalMaterial;
-      const knowledgeContents = resolveKnowledgeContents(contentPlan.knowledge?.item_ids, knowledgeContentMap);
+      if (hasRagReferences && !chapterRagContext.has(item.id)) {
+        try {
+          const ragContext = await fetchRagItemsForChapter(item);
+          chapterRagContext.set(item.id, ragContext);
+          if (ragContext.items.length) {
+            logs = [...logs, `RAG 检索（续跑）：${item.id} ${item.title || ''} 命中 ${ragContext.items.length} 段。`];
+          }
+        } catch (error) {
+          if (isPauseLikeError(error)) throw error;
+          logs = [...logs, `RAG 检索失败：${item.id} ${item.title || ''}，${error.message || String(error)}。`];
+        }
+      }
+      const chapterKnowledgeMap = (() => {
+        const view = buildChapterKnowledgeView(item.id, knowledgeItems, knowledgeContentMap);
+        return view.contentMap;
+      })();
+      const knowledgeContents = resolveKnowledgeContents(contentPlan.knowledge?.item_ids, chapterKnowledgeMap);
       const selectedFactsText = resolveSelectedFactsText(contentPlan, globalFacts);
 
       const generatedContent = await aiService.chat({
