@@ -3,7 +3,6 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 
 const MAX_QUERY_LENGTH = 250;
-const DEFAULT_TOP_K = 5;
 const DEFAULT_TIMEOUT_MS = 30_000;
 
 function parseEnvFile(filePath) {
@@ -56,7 +55,6 @@ function loadDifyEnv(app) {
   return {
     apiBaseUrl: read('DIFY_API_BASE_URL').replace(/\/+$/, ''),
     apiKey: read('DIFY_KNOWLEDGE_API_KEY'),
-    topK: Math.max(1, Math.min(20, Number.parseInt(read('DIFY_RETRIEVAL_TOP_K'), 10) || DEFAULT_TOP_K)),
     timeoutMs: Math.max(1_000, Number.parseInt(read('DIFY_REQUEST_TIMEOUT_MS'), 10) || DEFAULT_TIMEOUT_MS),
   };
 }
@@ -156,34 +154,29 @@ function createDifyKnowledgeService({ app }) {
     let page = 1;
     let hasMore = true;
     while (hasMore) {
-      const payload = await request(`/datasets?page=${page}&limit=100`);
+      const payload = await request(`/datasets?page=${page}&limit=100&include_all=true`);
       datasets.push(...(Array.isArray(payload?.data) ? payload.data : []));
       hasMore = Boolean(payload?.has_more);
       page += 1;
     }
     return {
       configured: true,
-      datasets: datasets.map(normalizeDataset).filter((dataset) => dataset.id && dataset.enable_api),
+      datasets: datasets
+        .map(normalizeDataset)
+        .filter((dataset) => dataset.id)
+        .sort((left, right) => Number(right.enable_api) - Number(left.enable_api) || left.name.localeCompare(right.name, 'zh-CN')),
     };
   }
 
-  async function retrieve(datasetIds, query, options = {}) {
+  async function retrieve(datasetIds, query) {
     const ids = [...new Set((Array.isArray(datasetIds) ? datasetIds : []).map((id) => String(id || '').trim()).filter(Boolean))];
     if (!ids.length) return [];
     const normalizedQuery = normalizeQuery(query);
     if (!normalizedQuery) return [];
-    const config = getConfig();
-    const topK = Math.max(1, Math.min(20, Number(options.topK) || config.topK));
     const results = await Promise.all(ids.map(async (datasetId) => {
       const payload = await request(`/datasets/${encodeURIComponent(datasetId)}/retrieve`, {
         method: 'POST',
-        body: JSON.stringify({
-          query: normalizedQuery,
-          retrieval_model: {
-            top_k: topK,
-            score_threshold_enabled: false,
-          },
-        }),
+        body: JSON.stringify({ query: normalizedQuery }),
       });
       return (Array.isArray(payload?.records) ? payload.records : [])
         .map((record) => normalizeRecord(datasetId, record))

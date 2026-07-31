@@ -3618,6 +3618,10 @@
   background: rgba(33, 116, 253, 0.1);
 }
 
+.outline-knowledge-document.compact.is-api-disabled small {
+  color: #b45309;
+}
+
 .outline-knowledge-selected-item {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

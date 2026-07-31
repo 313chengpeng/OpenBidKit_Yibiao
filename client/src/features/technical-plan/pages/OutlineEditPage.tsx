@@ -1242,7 +1242,7 @@ function OutlineEditPage({
       );
     }
     if (!difyDatasets.length) {
-      return <div className="outline-knowledge-empty">Dify 中暂无允许 API 访问的知识库。</div>;
+      return <div className="outline-knowledge-empty">Dify 中暂无知识库。</div>;
     }
     const keyword = knowledgeSearch.trim().toLowerCase();
     const visibleDatasets = keyword
@@ -1251,6 +1251,7 @@ function OutlineEditPage({
     const selectedDatasets = draftDifyDatasetIds
       .map((datasetId) => difyDatasets.find((dataset) => dataset.id === datasetId))
       .filter((dataset): dataset is DifyKnowledgeDataset => Boolean(dataset));
+    const apiEnabledDatasetCount = difyDatasets.filter((dataset) => dataset.enable_api).length;
     return (
       <div className="outline-knowledge-compact">
         <div className="outline-knowledge-search-row">
@@ -1261,7 +1262,7 @@ function OutlineEditPage({
             disabled={knowledgePickingDisabled}
             placeholder="搜索 Dify 知识库"
           />
-          <span>{keyword ? `匹配 ${visibleDatasets.length} 个知识库` : `共 ${difyDatasets.length} 个可用知识库`}</span>
+          <span>{keyword ? `匹配 ${visibleDatasets.length} 个知识库` : `共 ${difyDatasets.length} 个知识库，${apiEnabledDatasetCount} 个已启用 API`}</span>
         </div>
         <div className="outline-knowledge-grid">
           <div className="outline-knowledge-browser">
@@ -1270,10 +1271,10 @@ function OutlineEditPage({
               {visibleDatasets.map((dataset) => {
                 const selected = draftDifyDatasetIds.includes(dataset.id);
                 return (
-                  <label className={`outline-knowledge-document compact${selected ? ' is-selected' : ''}`} key={dataset.id}>
+                  <label className={`outline-knowledge-document compact${selected ? ' is-selected' : ''}${dataset.enable_api ? '' : ' is-api-disabled'}`} key={dataset.id}>
                     <input type="checkbox" checked={selected} disabled={knowledgePickingDisabled} onChange={() => toggleDraftDifyDataset(dataset.id)} />
                     <strong title={dataset.description || dataset.name}>{dataset.name}</strong>
-                    <small>{dataset.document_count} 个文档</small>
+                    <small>{dataset.document_count} 个文档{dataset.enable_api ? '' : ' · API 未启用'}</small>
                   </label>
                 );
               })}
