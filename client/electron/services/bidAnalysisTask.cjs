@@ -32,33 +32,28 @@ ${outputJson}
 仅输出 JSON，不要输出其他内容。`;
 }
 
-function requirementLedgerTask(title, goals, options = {}) {
-  const requiredTitlesField = options.includeRequiredTitles
-    ? '  "required_titles": ["招标文件明确要求的一级标题，按原文顺序；没有则为空数组"],\n'
-    : '';
+function markdownRequirementTask(title, goals) {
   return `任务：${title}
 
 目标：${goals}
 
-要求：
+整理要求：
 1. 只提取招标文件明确出现的要求，不使用常识补充，不把历史经验写成当前项目要求。
-2. 每项必须尽量保留章节、页码和原文关键句；无法确认页码时留空字符串。
-3. constraint_type 只能填写 mandatory、minimum、recommended 或 prohibited。
-4. 没有找到时 requirements 返回空数组。
-5. 仅输出可由 JSON.parse 解析的 JSON，不要输出代码块或说明。
+2. 按事项分组整理，保留原文中的顺序、数值、单位和专业术语，不要合并不相关要求。
+3. 每项尽量标明约束性质、适用范围、章节或页码以及原文关键句；原文未明确的信息写“未明确”。
+4. 约束性质使用“强制”“最低”“建议”“禁止”或“未明确”。
+5. 没有找到相关内容时，输出“未提取到相关要求”。
+6. 使用 Markdown 标题和列表，不要使用表格，不要输出 JSON、代码块、分析过程或额外说明。
 
 输出格式：
-{
-${requiredTitlesField}  "requirements": [
-    {
-      "title": "要求名称",
-      "requirement": "准确、完整的要求内容",
-      "constraint_type": "mandatory",
-      "scope": ["适用章节或对象"],
-      "source": { "section": "章节或条款", "page": "页码", "quote": "原文关键句" }
-    }
-  ]
-}`;
+# ${title}
+
+## <要求名称>
+- 【具体要求】：<准确、完整的要求内容>
+- 【约束性质】：<强制/最低/建议/禁止/未明确>
+- 【适用范围】：<适用章节或对象>
+- 【数据来源】：<章节、条款、页码或表格位置>
+- 【原文关键句】：<原文关键句>`;
 }
 function buildInvalidBidAndRejectionItemsPrompt() {
   return `任务：提取并分析招标文件中的“无效投标”和“废标项”。
@@ -138,20 +133,20 @@ const tasks = [
   { id: 'partAInfo', label: '甲方信息', required: true, output: 'json', description: '招标人公司、地址、联系人和电话。', prompt: () => jsonTask('提取甲方信息', '提取公司名称、地址、联系人、联系电话。', `{"company_name":"公司名称","address":"地址","contact_person":"联系人","contact_phone":"联系电话"}`) },
   { id: 'deliveryAndServiceRequirements', label: '交货和服务要求', required: true, output: 'json', description: '实施周期、交付范围、地点、验收、质保、售后、响应、培训和文档要求。', prompt: () => jsonTask('提取交货和服务要求', '提取实施周期/工期/交付期限、交付范围、交付/实施地点、验收要求、质保期、售后服务要求、响应时限、培训要求、资料/文档交付要求。', `{"implementation_period":"实施周期/工期/交付期限","delivery_scope":"交付范围","delivery_location":"交付/实施地点","acceptance_requirements":"验收要求","warranty_period":"质保期","after_sales_service":"售后服务要求","response_time":"响应时限","training_requirements":"培训要求","documentation_requirements":"资料/文档交付要求"}`) },
   {
-    id: 'outlineRequirements', label: '投标文件目录要求', required: true, output: 'json', description: '提取招标文件明确给定的投标文件目录、一级标题、顺序和文件组成要求。',
-    prompt: () => requirementLedgerTask('提取投标文件目录要求', '识别招标文件是否明确规定投标文件或技术方案的目录、一级标题、标题顺序、固定模板和必须包含的章节。区分强制目录、最低目录和推荐目录。', { includeRequiredTitles: true }),
+    id: 'outlineRequirements', label: '投标文件目录要求', required: false, output: 'markdown', description: '提取招标文件明确给定的投标文件目录、一级标题、顺序和文件组成要求。',
+    prompt: () => markdownRequirementTask('投标文件目录要求', '识别招标文件是否明确规定投标文件或技术方案的目录、一级标题、标题顺序、固定模板和必须包含的章节。区分强制目录、最低目录和推荐目录，并按原文顺序整理。'),
   },
   {
-    id: 'personnelRequirements', label: '人员要求', required: true, output: 'json', description: '提取岗位、人数、资格证书、经验、驻场和人员配置要求。',
-    prompt: () => requirementLedgerTask('提取人员要求', '提取项目负责人、项目经理、技术负责人、安全员、实施人员、运维人员等岗位的人数、资格证书、工作经验、驻场和到岗要求，包含评分表与技术要求中的人员条件。'),
+    id: 'personnelRequirements', label: '人员要求', required: false, output: 'markdown', description: '提取岗位、人数、资格证书、经验、驻场和人员配置要求。',
+    prompt: () => markdownRequirementTask('人员要求', '提取项目负责人、项目经理、技术负责人、安全员、实施人员、运维人员等岗位的人数、资格证书、工作经验、驻场和到岗要求，包含评分表与技术要求中的人员条件。'),
   },
   {
-    id: 'equipmentRequirements', label: '设备要求', required: true, output: 'json', description: '提取设备、仪器、工具、车辆的数量、规格、性能和投入要求。',
-    prompt: () => requirementLedgerTask('提取设备要求', '提取拟投入设备、机械、仪器、工具、车辆及物资的名称、数量、规格参数、性能、检测能力和到场要求，包含采购清单与评分表中的设备条件。'),
+    id: 'equipmentRequirements', label: '设备要求', required: false, output: 'markdown', description: '提取设备、仪器、工具、车辆的数量、规格、性能和投入要求。',
+    prompt: () => markdownRequirementTask('设备要求', '提取拟投入设备、机械、仪器、工具、车辆及物资的名称、数量、规格参数、性能、检测能力和到场要求，包含采购清单与评分表中的设备条件。'),
   },
   {
-    id: 'technicalParameterRequirements', label: '技术参数要求', required: true, output: 'json', description: '提取必须响应的技术参数、功能、性能、标准和禁止偏离项。',
-    prompt: () => requirementLedgerTask('提取技术参数要求', '提取必须响应的技术参数、规格、功能、性能指标、执行标准、兼容要求、验收指标和禁止负偏离项；保留数值、单位和适用对象。'),
+    id: 'technicalParameterRequirements', label: '技术参数要求', required: false, output: 'markdown', description: '提取必须响应的技术参数、功能、性能、标准和禁止偏离项。',
+    prompt: () => markdownRequirementTask('技术参数要求', '提取必须响应的技术参数、规格、功能、性能指标、执行标准、兼容要求、验收指标和禁止负偏离项；保留数值、单位和适用对象。'),
   },
   {
     id: 'procurementList', label: '采购清单', required: false, output: 'markdown', description: '采购内容、数量、规格参数、交付和验收要求。',

@@ -598,7 +598,7 @@ export interface YibiaoBridge {
     setWorkflowKind: (workflowKind: TechnicalPlanWorkflowKind) => Promise<void>;
     switchWorkflowKind: (workflowKind: TechnicalPlanWorkflowKind) => Promise<void>;
     saveBidAnalysisConfig: (payload: { mode: BidAnalysisMode; selectedTaskIds: string[]; bidSectionMode?: BidSectionMode }) => Promise<void>;
-    confirmTenderRequirements: () => Promise<void>;
+    confirmTenderRequirements: () => Promise<TechnicalPlanState>;
     saveOutlineConfig: (payload: { knowledgeSourceMode: 'local' | 'dify'; referenceKnowledgeDocumentIds: string[]; referenceDifyDatasetIds: string[]; outlineMode?: OutlineMode; outlineExpansionMode?: OutlineExpansionMode; wordControlOptions: OutlineWordControlOptions }) => Promise<void>;
     saveOutlineSelection: (payload: SaveOutlineSelectionRequest) => Promise<{ success: boolean }>;
     saveOutline: (payload: SaveOutlineRequest) => Promise<Partial<TechnicalPlanState>>;

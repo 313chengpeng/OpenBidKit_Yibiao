@@ -2,26 +2,16 @@ const crypto = require('node:crypto');
 
 const AUTHORITY_LEVEL = 'tender';
 const REQUIRED_AUTHORITY_TASK_IDS = Object.freeze([
-  'outlineRequirements',
-  'personnelRequirements',
-  'equipmentRequirements',
-  'technicalParameterRequirements',
+  'projectInfo',
+  'deliveryAndServiceRequirements',
 ]);
 
 const taskCategories = Object.freeze({
   projectInfo: 'project',
   deliveryAndServiceRequirements: 'delivery',
-  outlineRequirements: 'outline',
-  personnelRequirements: 'personnel',
-  equipmentRequirements: 'equipment',
-  technicalParameterRequirements: 'technical_parameter',
 });
 
 const categoryKeywords = Object.freeze({
-  outline: ['目录', '章节', '投标文件', '响应文件'],
-  personnel: ['人员', '团队', '组织', '岗位', '负责人', '经理', '工程师', '安全员', '证书', '资质'],
-  equipment: ['设备', '工具', '仪器', '机械', '车辆', '物资', '资源配置'],
-  technical_parameter: ['技术', '参数', '规格', '性能', '标准', '系统', '功能'],
   delivery: ['工期', '进度', '交付', '实施', '验收', '质保', '售后', '培训', '文档', '服务'],
   project: ['项目', '概述', '总体', '背景'],
 });
@@ -156,10 +146,8 @@ function formatTenderRequirements(items, maxChars = 12_000) {
   return lines.join('\n').slice(0, Math.max(0, maxChars));
 }
 
-function getRequiredOutlineTitles(storedPlan) {
-  const parsed = safeJsonParse(storedPlan?.bidAnalysisTasks?.outlineRequirements?.content);
-  const titles = Array.isArray(parsed?.required_titles) ? parsed.required_titles : [];
-  return [...new Set(titles.map(singleLine).filter(Boolean))];
+function getRequiredOutlineTitles() {
+  return [];
 }
 
 function getMissingAuthorityTaskIds(storedPlan) {

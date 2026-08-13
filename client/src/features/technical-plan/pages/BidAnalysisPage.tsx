@@ -76,7 +76,7 @@ function getModeLabel(mode: BidAnalysisMode) {
 
 const taskGroups = [
   { title: '关键项', ids: ['projectOverview', 'techRequirements', 'projectInfo', 'partAInfo', 'deliveryAndServiceRequirements'] },
-  { title: '权威约束', ids: ['outlineRequirements', 'personnelRequirements', 'equipmentRequirements', 'technicalParameterRequirements'] },
+  { title: '专项要求', ids: ['outlineRequirements', 'personnelRequirements', 'equipmentRequirements', 'technicalParameterRequirements'] },
   { title: '采购与响应', ids: ['procurementList', 'responseFileRequirements'] },
   { title: '投标流程', ids: ['keyInfo', 'marginInfo', 'openBid'] },
   { title: '评审要求', ids: ['qualificationReview', 'complianceCheck', 'evaluationBid', 'businessScoring'] },
