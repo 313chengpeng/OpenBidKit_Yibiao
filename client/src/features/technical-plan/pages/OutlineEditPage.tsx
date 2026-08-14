@@ -1478,6 +1478,7 @@ function OutlineEditPage({
                   {selectedItem.source_requirement_title && (
                     <small>{isExpansionWorkflow && outlineExpansionMode === 'original-only' ? '来源原方案目录' : '来源响应文件目录'}：{selectedItem.source_requirement_title}</small>
                   )}
+                  {selectedItem.tender_requirement_title && <small>来源招标目录：{selectedItem.tender_requirement_title}</small>}
                   <div className="outline-detail-actions">
                     <button type="button" className="primary-action" onClick={() => startEditing(selectedItem)} disabled={outlineMutationLocked || sorting}>编辑</button>
                     <button type="button" className="secondary-action" onClick={() => { void addChildItem(selectedItem.id); }} disabled={outlineMutationLocked || sorting}>添加子目录</button>

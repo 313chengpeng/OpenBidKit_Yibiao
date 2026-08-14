@@ -78,6 +78,8 @@ const workspaceDatabaseChannels = [
   'technical-plan:read-original-plan-markdown',
   'technical-plan:update-step',
   'technical-plan:set-workflow-kind',
+  'technical-plan:save-bid-analysis-config',
+  'technical-plan:confirm-tender-requirements',
   'technical-plan:save-outline-config',
   'technical-plan:save-outline',
   'technical-plan:save-global-facts',

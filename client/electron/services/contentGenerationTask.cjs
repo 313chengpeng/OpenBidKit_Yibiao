@@ -19,6 +19,7 @@ const {
 const { applyRangeEdits, findTextMatches } = require('../utils/textEdit.cjs');
 const { splitUserTextByContextLimit } = require('../utils/userTextSplitter.cjs');
 const { countReadableWords } = require('../utils/wordCount.cjs');
+const { buildTenderRequirementLedger, formatTenderRequirements, selectRequirementsForChapter } = require('./tenderRequirementLedger.cjs');
 
 const DEFAULT_CONTEXT_LENGTH_LIMIT = 400000;
 const AGENT_CONTEXT_THRESHOLD_RATIO = 0.7;
@@ -118,10 +119,13 @@ function formatBidAnalysisFactForPrompt(storedPlan, itemId, label) {
 }
 
 function formatBidAnalysisFactsForPrompt(storedPlan) {
+  const ledger = buildTenderRequirementLedger(storedPlan);
+  const authoritativeRequirements = formatTenderRequirements(ledger.items);
   return [
     formatBidAnalysisFactForPrompt(storedPlan, 'projectInfo', '项目信息'),
     formatBidAnalysisFactForPrompt(storedPlan, 'partAInfo', '甲方信息'),
     formatBidAnalysisFactForPrompt(storedPlan, 'deliveryAndServiceRequirements', '交货和服务要求'),
+    authoritativeRequirements ? `## 招标文件权威要求（不得修改）\n${authoritativeRequirements}` : '',
   ].filter(Boolean).join('\n\n');
 }
 
@@ -763,7 +767,7 @@ function renderKnowledgeItemsForPrompt(items) {
   })).filter((item) => item.id && item.title && item.resume), null, 2);
 }
 
-function buildChapterContentPlanMessages({ chapter, parentChapters, siblingChapters, projectOverview, bidAnalysisFactsText, globalFactTitlesText, regenerateRequirement, tableRequirement, maxTables, tableTotalSections, knowledgeItems }) {
+function buildChapterContentPlanMessages({ chapter, parentChapters, siblingChapters, projectOverview, bidAnalysisFactsText, authoritativeRequirementsText, globalFactTitlesText, regenerateRequirement, tableRequirement, maxTables, tableTotalSections, knowledgeItems }) {
   const chapterId = chapter.id || 'unknown';
   const chapterTitle = chapter.title || '未命名章节';
   const chapterDescription = chapter.description || '';
@@ -798,6 +802,9 @@ ${renderKnowledgeItemsForPrompt(knowledgeItems)}`,
   });
 
   messages.push({ role: 'user', content: `招标文件关键信息（用于判断正文需要引用哪些事实）：\n${formatBidKeyInfoForPrompt(projectOverview, bidAnalysisFactsText)}` });
+  if (String(authoritativeRequirementsText || '').trim()) {
+    messages.push({ role: 'user', content: `本章节适用的招标文件权威要求（必须遵守，不得被知识库覆盖）：\n${authoritativeRequirementsText}` });
+  }
   if (String(globalFactTitlesText || '').trim()) {
     messages.push({ role: 'user', content: `Step04 全局事实变量标题清单（编排时只能选择标题，不要输出具体变量内容）：\n${globalFactTitlesText}` });
   }
@@ -858,7 +865,7 @@ function formatKnowledgeContentsForPrompt(contents) {
     .join('\n\n');
 }
 
-function buildChapterContentMessages({ chapter, projectOverview, selectedFactsText, regenerateRequirement, contentPlan, knowledgeContents, preSectionInstruction, wordControl, generationTarget = 0 }) {
+function buildChapterContentMessages({ chapter, projectOverview, selectedFactsText, authoritativeRequirementsText, regenerateRequirement, contentPlan, knowledgeContents, preSectionInstruction, wordControl, generationTarget = 0 }) {
   const chapterId = chapter.id || 'unknown';
   const chapterTitle = chapter.title || '未命名章节';
   const chapterDescription = chapter.description || '';
@@ -895,6 +902,16 @@ function buildChapterContentMessages({ chapter, projectOverview, selectedFactsTe
     messages.push({ role: 'user', content: String(preSectionInstruction || '').trim() });
   }
   appendSelectedFactsMessage(messages, selectedFactsText);
+
+  if (String(authoritativeRequirementsText || '').trim()) {
+    messages.push({
+      role: 'user',
+      content: `<authoritative_requirements>
+以下内容来自招标文件，必须准确响应；不得修改数字、单位、数量、期限、人员、设备、参数和标准，知识库内容冲突时必须忽略知识库。
+${authoritativeRequirementsText}
+</authoritative_requirements>`,
+    });
+  }
 
   if (knowledgeContents?.length) {
     messages.push({
@@ -939,11 +956,12 @@ function buildChapterContentMessages({ chapter, projectOverview, selectedFactsTe
   return messages;
 }
 
-function buildRestoredChapterContentMessages({ chapter, projectOverview, selectedFactsText, regenerateRequirement, contentPlan, knowledgeContents, restoredContent, wordControl, generationTarget = 0 }) {
+function buildRestoredChapterContentMessages({ chapter, projectOverview, selectedFactsText, authoritativeRequirementsText, regenerateRequirement, contentPlan, knowledgeContents, restoredContent, wordControl, generationTarget = 0 }) {
   const messages = buildChapterContentMessages({
     chapter,
     projectOverview,
     selectedFactsText,
+    authoritativeRequirementsText,
     regenerateRequirement,
     contentPlan,
     knowledgeContents,
@@ -2105,7 +2123,7 @@ function loadContentKnowledgeReferences(knowledgeBaseService, documentIds, log) 
   }
 }
 
-async function loadDifyContentKnowledge(difyKnowledgeService, datasetIds, leaves, projectOverview, log) {
+async function loadDifyContentKnowledge(difyKnowledgeService, datasetIds, leaves, projectOverview, tenderRequirementLedger, log) {
   if (!datasetIds.length) {
     log('本次正文生成未选择 Dify 知识库。');
     return { items: [], contentMap: new Map(), itemsBySection: new Map() };
@@ -2117,15 +2135,31 @@ async function loadDifyContentKnowledge(difyKnowledgeService, datasetIds, leaves
   const contentMap = new Map();
   const itemsBySection = new Map();
   const contexts = Array.isArray(leaves) ? leaves : [];
-  const concurrency = 4;
+  let failedDifyRequestCount = 0;
+  const concurrency = 2;
   for (let offset = 0; offset < contexts.length; offset += concurrency) {
     const batch = contexts.slice(offset, offset + concurrency);
     const results = await Promise.all(batch.map(async ({ item, parentChapters }) => {
       const parentTitles = (parentChapters || []).map((parent) => parent.title).filter(Boolean).join('；');
-      const query = `章节：${parentTitles ? `${parentTitles}；` : ''}${item.title || ''}\n要求：${item.description || ''}\n项目：${projectOverview || ''}`;
+      const chapterPath = `${parentTitles ? `${parentTitles}；` : ''}${item.title || ''}`;
+      const requirementTopics = selectRequirementsForChapter(tenderRequirementLedger, item, parentChapters)
+        .map((requirement) => requirement.title)
+        .filter(Boolean)
+        .slice(0, 8)
+        .join('；');
+      const projectHint = singleLine(projectOverview).slice(0, 80);
+      const query = [
+        `章节主题：${chapterPath}${projectHint ? `；项目：${projectHint}` : ''}`,
+        requirementTopics ? `招标要求主题：${requirementTopics}` : `章节说明：${item.description || ''}`,
+        '检索目标：与本章节直接相关的实施方法、工作流程、管理措施、技术做法和专业写作素材；忽略其他项目的具体人数、设备数量、工期、品牌和型号。',
+      ].join('\n');
       return {
         itemId: item.id,
-        hits: await difyKnowledgeService.retrieve(datasetIds, query),
+        hits: await difyKnowledgeService.retrieve(datasetIds, query, {
+          maxQueries: 3,
+          maxResults: 30,
+          onQueryError: () => { failedDifyRequestCount += 1; },
+        }),
       };
     }));
     for (const result of results) {
@@ -2140,7 +2174,7 @@ async function loadDifyContentKnowledge(difyKnowledgeService, datasetIds, leaves
     }
   }
   log(uniqueItems.size
-    ? `Dify 已为 ${contexts.length} 个小节召回 ${uniqueItems.size} 条去重知识片段。`
+    ? `Dify 已为 ${contexts.length} 个小节召回 ${uniqueItems.size} 条去重知识片段。${failedDifyRequestCount ? ` ${failedDifyRequestCount} 次请求失败，其余结果已保留。` : ''}`
     : 'Dify 未召回正文参考资料。');
   return {
     items: [...uniqueItems.values()],
@@ -2946,6 +2980,7 @@ async function runContentGenerationTask({ aiService, agentService, workspaceStor
   const globalFactTitlesText = formatGlobalFactTitlesForPrompt(globalFacts);
   const allowedFactTitles = new Set(globalFacts.map((group) => singleLine(group?.title)).filter(Boolean));
   const bidAnalysisFactsText = formatBidAnalysisFactsForPrompt(storedPlan);
+  const tenderRequirementLedger = buildTenderRequirementLedger(storedPlan);
   const isExpansionWorkflow = storedPlan.workflowKind === 'existing-plan-expansion';
   let originalPlanMarkdown = '';
   let originalPlanSegments = [];
@@ -3452,8 +3487,9 @@ async function runContentGenerationTask({ aiService, agentService, workspaceStor
     const difyKnowledge = await loadDifyContentKnowledge(
       difyKnowledgeService,
       referenceDifyDatasetIds,
-      leaves,
+      tasksToRun,
       projectOverview,
+      tenderRequirementLedger,
       (message) => { logs = [...logs, message]; },
     );
     knowledgeItems = difyKnowledge.items;
@@ -3927,6 +3963,10 @@ async function runContentGenerationTask({ aiService, agentService, workspaceStor
   async function planOne(context, { preservedOriginalMaterial } = {}) {
     const { item, parentChapters, siblingChapters } = context;
     const chapterKnowledgeItems = knowledgeItemsBySection.get(item.id) || knowledgeItems;
+    const authoritativeRequirementsText = formatTenderRequirements(
+      selectRequirementsForChapter(tenderRequirementLedger, item, parentChapters),
+      8_000,
+    );
     let contentPlan;
 
     try {
@@ -3937,6 +3977,7 @@ async function runContentGenerationTask({ aiService, agentService, workspaceStor
           siblingChapters,
           projectOverview,
           bidAnalysisFactsText,
+          authoritativeRequirementsText,
           globalFactTitlesText,
           regenerateRequirement,
           tableRequirement,
@@ -4247,11 +4288,15 @@ async function runContentGenerationTask({ aiService, agentService, workspaceStor
       originalState = getOriginalMaterialRuntimeState(item);
       originalMaterial = originalState.originalMaterial;
       const knowledgeContents = resolveKnowledgeContents(contentPlan.knowledge?.item_ids, knowledgeContentMap);
+      const authoritativeRequirementsText = formatTenderRequirements(
+        selectRequirementsForChapter(tenderRequirementLedger, item, context.parentChapters),
+        8_000,
+      );
       const selectedFactsText = resolveSelectedFactsText(contentPlan, globalFacts);
       const generationTarget = computeGenerationWordTarget(wordControl, leaves.length);
       const contentMessages = needsRestoredOptimization
-        ? buildRestoredChapterContentMessages({ chapter: item, projectOverview, selectedFactsText, regenerateRequirement, contentPlan, knowledgeContents, restoredContent: previousContent, wordControl, generationTarget })
-        : buildChapterContentMessages({ chapter: item, projectOverview, selectedFactsText, regenerateRequirement, contentPlan, knowledgeContents, wordControl, generationTarget });
+        ? buildRestoredChapterContentMessages({ chapter: item, projectOverview, selectedFactsText, authoritativeRequirementsText, regenerateRequirement, contentPlan, knowledgeContents, restoredContent: previousContent, wordControl, generationTarget })
+        : buildChapterContentMessages({ chapter: item, projectOverview, selectedFactsText, authoritativeRequirementsText, regenerateRequirement, contentPlan, knowledgeContents, wordControl, generationTarget });
 
       let generatedContent;
       if (needsRestoredOptimization && shouldUseAgentForMessages(aiService, contentMessages)) {

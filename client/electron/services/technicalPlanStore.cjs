@@ -2,6 +2,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const { getBidAnalysisTasks } = require('./bidAnalysisTask.cjs');
+const { createTenderRequirementLedgerFingerprint, getMissingAuthorityTaskIds } = require('./tenderRequirementLedger.cjs');
 const {
   getTechnicalPlanGeneratedIllustrationsDir,
   getTechnicalPlanIllustrationsDir,
@@ -39,6 +40,10 @@ const initialState = {
   bidAnalysisSelectedTaskIds: [],
   bidAnalysisTasks: {},
   bidAnalysisProgress: 0,
+  requirementLedgerHash: '',
+  requirementLedgerConfirmedHash: '',
+  requirementLedgerConfirmedAt: undefined,
+  requirementLedgerConfirmed: false,
   bidSectionMode: 'single',
   bidSections: [],
   bidSectionExtractionStatus: 'idle',
@@ -1803,6 +1808,7 @@ function createTechnicalPlanStore({ app, db, fileService, agentService, taskLogS
       safeJsonParse(meta.bid_analysis_selected_task_ids_json, []),
     );
     const bidAnalysisTasks = loadBidItems();
+    const requirementLedgerHash = createTenderRequirementLedgerFingerprint({ bidAnalysisTasks });
     const outlineData = loadOutlineData(meta);
     const tasks = loadTasks();
     const bidSections = normalizeBidSections(safeJsonParse(meta.bid_sections_json, []));
@@ -1845,6 +1851,10 @@ function createTechnicalPlanStore({ app, db, fileService, agentService, taskLogS
       bidAnalysisSelectedTaskIds,
       bidAnalysisTasks,
       bidAnalysisProgress: calculateBidProgress(bidAnalysisMode, bidAnalysisTasks, bidAnalysisSelectedTaskIds),
+      requirementLedgerHash,
+      requirementLedgerConfirmedHash: meta.requirement_ledger_confirmed_hash || '',
+      requirementLedgerConfirmedAt: meta.requirement_ledger_confirmed_at || undefined,
+      requirementLedgerConfirmed: Boolean(requirementLedgerHash && meta.requirement_ledger_confirmed_hash === requirementLedgerHash),
       bidSectionMode: normalizeBidSectionMode(meta.bid_section_mode),
       bidSections,
       bidSectionExtractionStatus: bidSectionExtractionTask?.status
@@ -1964,6 +1974,24 @@ function createTechnicalPlanStore({ app, db, fileService, agentService, taskLogS
       tender_markdown_hash: stableHash(originalMarkdown),
       tender_markdown_chars: originalMarkdown.length,
     });
+  }
+
+  function confirmTenderRequirements() {
+    const state = loadTechnicalPlan();
+    const missingTaskIds = getMissingAuthorityTaskIds(state);
+    if (missingTaskIds.length) {
+      const labels = new Map(getBidAnalysisTasks('key').map((task) => [task.id, task.label]));
+      throw new Error(`请先完成权威约束解析项：${missingTaskIds.map((taskId) => labels.get(taskId) || taskId).join('、')}`);
+    }
+    const fingerprint = createTenderRequirementLedgerFingerprint(state);
+    if (!fingerprint) {
+      throw new Error('当前权威要求解析结果无法确认，请重新解析后再试');
+    }
+    updateMeta({
+      requirement_ledger_confirmed_hash: fingerprint,
+      requirement_ledger_confirmed_at: now(),
+    });
+    return loadTechnicalPlan();
   }
 
   function saveBidAnalysisConfig({ mode, selectedTaskIds, bidSectionMode } = {}) {
@@ -2339,6 +2367,7 @@ function createTechnicalPlanStore({ app, db, fileService, agentService, taskLogS
     updateStep,
     setWorkflowKind,
     switchWorkflowKind,
+    confirmTenderRequirements,
     saveBidAnalysisConfig,
     saveOutlineConfig,
     saveOutlineSelection,

@@ -87,6 +87,10 @@ const resetState = {
   bidAnalysisSelectedTaskIds: [] as string[],
   bidAnalysisTasks: {},
   bidAnalysisProgress: 0,
+  requirementLedgerHash: '',
+  requirementLedgerConfirmedHash: '',
+  requirementLedgerConfirmedAt: undefined,
+  requirementLedgerConfirmed: false,
   bidSectionMode: 'single' as const,
   bidSections: [],
   bidSectionExtractionStatus: 'idle' as const,
@@ -351,7 +355,7 @@ function TechnicalPlanHome({ workflowKind, registerLeaveGuard, onSectionChange }
     || Boolean(state.tenderFile?.selectedSectionId && state.bidSections.some((section) => section.id === state.tenderFile?.selectedSectionId));
   const bidSectionReady = state.bidSectionMode !== 'multiple'
     || (state.bidSectionExtractionStatus === 'success' && !isBidSectionExtractionRunning && selectedBidSectionValid);
-  const bidAnalysisReady = requiredBidAnalysisReady && !isBidAnalysisTaskRunning && bidSectionReady;
+  const bidAnalysisReady = requiredBidAnalysisReady && state.requirementLedgerConfirmed && !isBidAnalysisTaskRunning && bidSectionReady;
   const globalFactsReady = state.globalFacts.length > 0 && state.globalFactsTask?.status === 'success';
   const contentTaskStatus = state.contentGenerationTask?.status;
   const isContentGenerating = contentTaskStatus === 'running' || contentTaskStatus === 'pausing';
@@ -384,7 +388,9 @@ function TechnicalPlanHome({ workflowKind, registerLeaveGuard, onSectionChange }
                 ? '招标文件解析任务仍在运行，请等待当前任务结束'
                 : state.step === 'bid-analysis' && !requiredBidAnalysisReady
                   ? '招标文件解析完成后才能进入目录生成'
-                  : state.step === 'outline-generation' && !state.outlineData
+                  : state.step === 'bid-analysis' && !state.requirementLedgerConfirmed
+                    ? '请先核对并确认招标文件权威要求'
+                    : state.step === 'outline-generation' && !state.outlineData
                     ? '目录生成完成后才能进入全局事实设定'
                     : state.step === 'outline-generation' && !state.outlineWordControlSnapshot
                       ? '当前目录缺少字数控制生效配置，请重新生成目录'
@@ -612,6 +618,10 @@ function TechnicalPlanHome({ workflowKind, registerLeaveGuard, onSectionChange }
 
   const switchStep = async (step: TechnicalPlanStep) => {
     if (step === state.step) {
+      return;
+    }
+    if (state.step === 'bid-analysis' && step === 'outline-generation' && !state.requirementLedgerConfirmed) {
+      showToast('请先逐项核对并确认招标文件权威要求', 'info');
       return;
     }
     const allowed = await confirmPendingSortLeave();
@@ -1202,6 +1212,8 @@ function TechnicalPlanHome({ workflowKind, registerLeaveGuard, onSectionChange }
           tasks={state.bidAnalysisTasks}
           task={state.bidAnalysisTask}
           progress={state.bidAnalysisProgress}
+          requirementLedgerConfirmed={state.requirementLedgerConfirmed}
+          requirementLedgerConfirmedAt={state.requirementLedgerConfirmedAt}
           onProgressChange={(progress) => setState((prev) => ({ ...prev, bidAnalysisProgress: progress }))}
           onConfigSaved={(nextState) => setState((prev) => ({ ...prev, ...nextState }))}
         />

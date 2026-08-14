@@ -1,5 +1,6 @@
 const { buildBidSectionContextHint } = require('../utils/bidSectionContext.cjs');
 const { splitUserTextByContextLimit } = require('../utils/userTextSplitter.cjs');
+const { buildTenderRequirementLedger, formatTenderRequirements } = require('./tenderRequirementLedger.cjs');
 
 const DEFAULT_CONTEXT_LENGTH_LIMIT = 400000;
 const GLOBAL_FACTS_CONTEXT_LIMIT_RATIO = 0.8;
@@ -8,9 +9,9 @@ const GLOBAL_FACTS_SYSTEM_PROMPT = `你是专业的投标技术方案事实变�
 
 关键定义：
 1. 全局事实变量不是招标要求摘录、评分规则摘要或待办事项清单，而是技术方案正文中需要保持一致的确定性方案事实、响应设定、承诺口径或执行安排。
-2. 用户资料已经给出明确事实时，优先使用资料中的事实值。
-3. 用户资料只给出要求、约束或评价口径时，不要原样摘录为要求句；如果该内容会影响后续正文的一致写法，应转写为本方案已经采用、已经具备或统一承诺的事实表达。
-4. 用户资料没有给出具体值，但该信息对全文一致性重要，且当前任务允许补足时，可以根据项目语境模拟生成合理、稳定、不冲突的事实值。
+2. 招标文件和用户确认资料已经给出明确事实时，必须保持原值，不得改写数字、单位、数量、期限、人员、设备、参数和标准。
+3. 招标文件只给出最低要求或约束时，只能按原要求记录，不得擅自把最低要求提高、降低或改写为未经确认的方案承诺。
+4. 用户资料没有给出具体值时，不得模拟生成人员、设备、周期、质保、品牌、型号等确定性事实。
 
 通用要求：
 1. 输出必须使用简体中文。
@@ -197,72 +198,6 @@ function formatOutlineForPrompt(items, level = 1, lines = []) {
   return lines.join('\n');
 }
 
-function normalizeReferenceDocumentIds(storedPlan) {
-  const raw = storedPlan?.referenceKnowledgeDocumentIds || [];
-  return Array.isArray(raw) ? [...new Set(raw.map((id) => String(id || '').trim()).filter(Boolean))] : [];
-}
-
-function loadKnowledgeItems(knowledgeBaseService, documentIds, log) {
-  if (!documentIds.length) {
-    log('未选择参考知识库，本次只基于招标文件、Step02 解析结果和目录预设关键信息。', 12);
-    return [];
-  }
-  if (!knowledgeBaseService?.readReferences) {
-    log('未找到知识库读取服务，本次不使用知识库条目。', 12);
-    return [];
-  }
-
-  const items = [];
-  try {
-    const references = knowledgeBaseService.readReferences(documentIds);
-    for (const reference of Array.isArray(references) ? references : []) {
-      const documentId = String(reference?.document?.id || '').trim();
-      for (const item of Array.isArray(reference?.items) ? reference.items : []) {
-        const title = singleLine(item?.title);
-        const content = String(item?.content || '').trim();
-        if (!title || !content) continue;
-        items.push({
-          id: `${documentId}::${singleLine(item?.id)}`,
-          title,
-          resume: singleLine(item?.resume),
-          content,
-        });
-      }
-    }
-  } catch (error) {
-    log(`读取知识库条目失败，已跳过：${error.message || String(error)}`, 12);
-  }
-  log(items.length ? `已读取 ${items.length} 条知识库完整条目。` : '未读取到可用知识库完整条目。', 14);
-  return items;
-}
-
-async function loadDifyKnowledgeItems(difyKnowledgeService, datasetIds, query, log) {
-  if (!datasetIds.length) {
-    log('未选择 Dify 知识库，本次不使用服务器知识库。', 12);
-    return [];
-  }
-  if (!difyKnowledgeService?.retrieve) {
-    throw new Error('Dify 知识库服务尚未初始化');
-  }
-  log(`正在从 ${datasetIds.length} 个 Dify 知识库检索全局事实参考资料。`, 12);
-  const items = await difyKnowledgeService.retrieve(datasetIds, query);
-  log(items.length ? `Dify 已召回 ${items.length} 条完整知识片段。` : 'Dify 未召回可用知识片段。', 14);
-  return items;
-}
-
-function buildGlobalFactsDifyQuery(storedPlan) {
-  return `项目：${storedPlan.projectOverview || ''}\n技术要求：${storedPlan.techRequirements || ''}`;
-}
-
-function formatKnowledgeItemForPrompt(item, index) {
-  return `<knowledge_item index="${index + 1}" id="${singleLine(item?.id)}">
-标题：${singleLine(item?.title)}
-简介：${singleLine(item?.resume)}
-正文：
-${String(item?.content || '').trim()}
-</knowledge_item>`;
-}
-
 function formatBidAnalysisFactForPrompt(storedPlan, itemId, label) {
   const item = storedPlan?.bidAnalysisTasks?.[itemId];
   const content = item?.status === 'success' ? String(item.content || '').trim() : '';
@@ -270,10 +205,13 @@ function formatBidAnalysisFactForPrompt(storedPlan, itemId, label) {
 }
 
 function formatBidAnalysisFactsForPrompt(storedPlan) {
+  const ledger = buildTenderRequirementLedger(storedPlan);
+  const authoritativeRequirements = formatTenderRequirements(ledger.items);
   return [
     formatBidAnalysisFactForPrompt(storedPlan, 'projectInfo', '项目信息'),
     formatBidAnalysisFactForPrompt(storedPlan, 'partAInfo', '甲方信息'),
     formatBidAnalysisFactForPrompt(storedPlan, 'deliveryAndServiceRequirements', '交货和服务要求'),
+    authoritativeRequirements ? `## 招标文件权威要求（不得修改）\n${authoritativeRequirements}` : '',
   ].filter(Boolean).join('\n\n') || '未提供 Step02 关键解析结果。';
 }
 
@@ -303,36 +241,7 @@ function createTextSegments(text, aiService, fixedMessages) {
   return parts.map((content, index) => ({ index: index + 1, total: parts.length, content }));
 }
 
-function createKnowledgeItemSegments(knowledgeItems, aiService, fixedMessages) {
-  const segmentLimit = getGlobalFactsSegmentLimit(aiService, fixedMessages);
-  const blocks = (knowledgeItems || [])
-    .map((item, index) => formatKnowledgeItemForPrompt(item, index))
-    .filter((block) => block.trim());
-  const segments = [];
-  let current = [];
-  let currentLength = 0;
-
-  const flush = () => {
-    if (!current.length) return;
-    segments.push({ content: current.join('\n\n'), itemCount: current.length });
-    current = [];
-    currentLength = 0;
-  };
-
-  for (const block of blocks) {
-    const nextLength = currentLength + block.length + (current.length ? 2 : 0);
-    if (current.length && nextLength > segmentLimit) {
-      flush();
-    }
-    current.push(block);
-    currentLength += block.length + (current.length > 1 ? 2 : 0);
-  }
-  flush();
-
-  return segments.map((segment, index) => ({ ...segment, index: index + 1, total: segments.length }));
-}
-
-function buildGlobalFactsLightContextMessages({ projectOverview, outlineData, bidAnalysisFactsText, knowledgeItems, sectionHint }) {
+function buildGlobalFactsLightContextMessages({ projectOverview, outlineData, bidAnalysisFactsText, sectionHint }) {
   const messages = [{ role: 'system', content: GLOBAL_FACTS_SYSTEM_PROMPT }];
   if (sectionHint) {
     messages.push({ role: 'system', content: sectionHint });
@@ -341,7 +250,7 @@ function buildGlobalFactsLightContextMessages({ projectOverview, outlineData, bi
     { role: 'user', content: `项目概述：\n${String(projectOverview || '').trim() || '未提供'}` },
     { role: 'user', content: `Step02 关键解析结果：\n${bidAnalysisFactsText}` },
     { role: 'user', content: `已生成技术方案目录：\n${formatOutlineForPrompt(outlineData.outline || [])}` },
-    { role: 'user', content: (knowledgeItems || []).length ? `用户已选择 ${(knowledgeItems || []).length} 条知识库条目；知识库正文将在独立分段步骤中处理。` : '用户未选择参考知识库。' },
+    { role: 'user', content: '知识库参考素材不参与本阶段权威事实生成；本阶段只能依据招标文件、用户资料和已确认项目内容整理事实。' },
   );
   return messages;
 }
@@ -427,33 +336,6 @@ function buildTenderSegmentMergeMessages(context) {
 8. 只返回 JSON。`,
     },
     { role: 'user', content: buildGroupsJsonExample() },
-  ];
-}
-
-function buildKnowledgeSegmentPatchMessages(context) {
-  const { knowledgeSegment, groups } = context;
-  return [
-    ...buildGlobalFactsLightContextMessages(context),
-    { role: 'user', content: `当前全局事实变量：\n${JSON.stringify(groups || [], null, 2)}` },
-    { role: 'user', content: `知识库完整条目分段 ${knowledgeSegment.index}/${knowledgeSegment.total}：\n${knowledgeSegment.content}` },
-    {
-      role: 'user',
-      content: `知识库全局事实补充任务：
-
-请基于当前知识库分段，判断是否需要补充或修正全局事实变量。
-
-要求：
-1. 只返回需要补充或替换的 patches，不要重新生成全部 groups。
-2. 只处理与项目概述、技术评分信息、目录和技术方案正文强相关，且能够沉淀为稳定方案事实的内容。
-3. 知识库内容如果只是通用要求、规范说明、写作建议或参考素材，不要原样补充为事实变量；只有能够转为本项目统一采用的事实、安排、承诺口径或技术设定时才返回 patch。
-4. 不要用知识库内容覆盖招标文件中的明确硬性要求；只有知识库提供更具体且不冲突的事实值时才补充。
-5. 如果补充内容属于已有大项，target_group_id 必须使用已有 id。
-6. 如果确实需要新增大项，提供 title 和 content。
-7. mode 只能是 append、prepend 或 replace；默认使用 append。
-8. 没有可补充内容时返回 {"patches":[]}。
-9. 只返回 JSON。`,
-    },
-    { role: 'user', content: buildPatchesJsonExample() },
   ];
 }
 
@@ -743,23 +625,6 @@ async function runSegmentedPatchExtraction({ aiService, context, segments, build
   return mergePatchResultsInBatches({ aiService, context, patchResults, sourceLabel: mergeSourceLabel, log, progress: mergeProgress });
 }
 
-async function runKnowledgeGlobalFactPatches(aiService, context, knowledgeItems, log) {
-  if (!knowledgeItems.length) return { patches: [] };
-  const fixedMessages = buildKnowledgeSegmentPatchMessages({ ...context, knowledgeSegment: { index: 999, total: 999, content: '' } });
-  const segments = createKnowledgeItemSegments(knowledgeItems, aiService, fixedMessages);
-  return runSegmentedPatchExtraction({
-    aiService,
-    context,
-    segments,
-    mergeSourceLabel: '知识库',
-    startProgress: 52,
-    segmentProgress: 58,
-    mergeProgress: 64,
-    buildMessages: ({ segment, ...rest }) => buildKnowledgeSegmentPatchMessages({ ...rest, knowledgeSegment: segment }),
-    log,
-  });
-}
-
 async function runOriginalPlanGlobalFactPatches(aiService, context, originalPlanMarkdown, log) {
   const fixedMessages = buildOriginalPlanSegmentPatchMessages({ ...context, originalPlanSegment: { index: 999, total: 999, content: '' } });
   const segments = createTextSegments(originalPlanMarkdown, aiService, fixedMessages);
@@ -789,7 +654,7 @@ async function finalizeGlobalFacts(aiService, context, log) {
   });
 }
 
-async function runGlobalFactsTask({ aiService, workspaceStore, knowledgeBaseService, difyKnowledgeService, updateTask, checkpointTask }) {
+async function runGlobalFactsTask({ aiService, workspaceStore, updateTask, checkpointTask }) {
   let logs = ['开始生成全局事实变量。'];
   let currentProgress = 5;
   function log(message, progress = currentProgress) {
@@ -826,17 +691,13 @@ async function runGlobalFactsTask({ aiService, workspaceStore, knowledgeBaseServ
     globalFacts: [],
   });
 
-  const referenceKnowledgeDocumentIds = normalizeReferenceDocumentIds(storedPlan);
-  const knowledgeSourceMode = storedPlan.knowledgeSourceMode === 'dify' ? 'dify' : 'local';
-  const referenceDifyDatasetIds = Array.isArray(storedPlan.referenceDifyDatasetIds) ? storedPlan.referenceDifyDatasetIds : [];
   const bidAnalysisFactsText = formatBidAnalysisFactsForPrompt(storedPlan);
-  log('正在读取招标文件、Step02 解析结果、目录和参考知识库。', 10);
+  log('正在读取招标文件、Step02 权威解析结果和目录。', 10);
   if (isExpansionWorkflow) {
     log('已读取原方案，本次将优先从原方案抽取全局事实变量。', 18);
   }
-  const knowledgeItems = knowledgeSourceMode === 'dify'
-    ? await loadDifyKnowledgeItems(difyKnowledgeService, referenceDifyDatasetIds, buildGlobalFactsDifyQuery(storedPlan), log)
-    : loadKnowledgeItems(knowledgeBaseService, referenceKnowledgeDocumentIds, log);
+  log('知识库仅作为目录和正文参考素材，不参与生成或修改招标文件权威全局事实。', 14);
+
 
   const selectedSectionId = storedPlan.tenderFile?.selectedSectionId;
   const selectedSection = selectedSectionId && Array.isArray(storedPlan.bidSections)
@@ -850,7 +711,6 @@ async function runGlobalFactsTask({ aiService, workspaceStore, knowledgeBaseServ
     projectOverview: storedPlan.projectOverview || '',
     outlineData,
     bidAnalysisFactsText,
-    knowledgeItems,
     sectionHint,
     isExpansionWorkflow,
   };
@@ -860,14 +720,7 @@ async function runGlobalFactsTask({ aiService, workspaceStore, knowledgeBaseServ
   let groups = tenderFacts.groups;
   checkpointTask({ status: 'running', progress: 48, logs }, { globalFacts: groups });
 
-  const knowledgePatch = await runKnowledgeGlobalFactPatches(aiService, { ...baseContext, groups }, knowledgeItems, log);
-  if (knowledgePatch.patches?.length) {
-    groups = mergeGlobalFactPatches(groups, knowledgePatch.patches);
-    checkpointTask({ status: 'running', progress: 66, logs }, { globalFacts: groups });
-    log(`知识库全局事实补充已应用：${knowledgePatch.patches.length} 条。`, 66);
-  } else if (knowledgeItems.length) {
-    log('知识库未返回需要补充的全局事实变量。', 66);
-  }
+  log('已完成招标文件权威事实提取；知识库参考素材未写入全局事实。', 66);
 
   if (isExpansionWorkflow) {
     const originalPatch = await runOriginalPlanGlobalFactPatches(aiService, { ...baseContext, groups }, originalPlanMarkdown, log);

@@ -164,6 +164,7 @@ const bridge = {
     setWorkflowKind: (workflowKind) => ipcRenderer.invoke('technical-plan:set-workflow-kind', workflowKind),
     switchWorkflowKind: (workflowKind) => ipcRenderer.invoke('technical-plan:switch-workflow-kind', workflowKind),
     saveBidAnalysisConfig: (payload) => ipcRenderer.invoke('technical-plan:save-bid-analysis-config', payload),
+    confirmTenderRequirements: () => ipcRenderer.invoke('technical-plan:confirm-tender-requirements'),
     saveOutlineConfig: (payload) => ipcRenderer.invoke('technical-plan:save-outline-config', payload),
     saveOutlineSelection: (payload) => ipcRenderer.invoke('tasks:confirm-outline-selection', payload),
     saveOutline: (outlineData) => ipcRenderer.invoke('technical-plan:save-outline', outlineData),

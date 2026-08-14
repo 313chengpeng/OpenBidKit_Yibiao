@@ -5,6 +5,7 @@ const { runContentGenerationTask } = require('./contentGenerationTask.cjs');
 const { runGlobalFactsTask } = require('./globalFactsTask.cjs');
 const { runOutlineGenerationTaskV2 } = require('./outlineGenerationTaskV2.cjs');
 const { OUTLINE_AGENT_TASK_KEY } = require('./outlineGenerationAgentV2Config.cjs');
+const { isTenderRequirementLedgerConfirmed } = require('./tenderRequirementLedger.cjs');
 const { runRejectionCheckTask, runRejectionItemsExtractionTask } = require('./rejectionCheckTask.cjs');
 const { normalizeLogs } = require('./taskLogStore.cjs');
 
@@ -1086,6 +1087,10 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
       return startManagedTask('bid-analysis', payload, runBidAnalysisTask);
     },
     startOutlineGeneration(payload) {
+      const technicalPlan = technicalPlanStore.loadTechnicalPlan() || {};
+      if (!isTenderRequirementLedgerConfirmed(technicalPlan)) {
+        throw new Error('请先在招标文件解析步骤核对并确认权威要求，再生成目录');
+      }
       const outlineMode = payload?.outline_mode === 'response-file' ? 'response-file' : 'aligned';
       const taskPayload = { ...payload, outline_mode: outlineMode };
       return startManagedTask('outline-generation', taskPayload, runOutlineGenerationTaskV2, {

@@ -2,7 +2,10 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 
-const MAX_QUERY_LENGTH = 250;
+const MAX_QUERY_LENGTH = 190;
+const DEFAULT_MAX_QUERY_COUNT = 6;
+const DEFAULT_MAX_RESULTS = 60;
+const RETRIEVAL_CONCURRENCY = 4;
 const DEFAULT_TIMEOUT_MS = 30_000;
 
 function parseEnvFile(filePath) {
@@ -59,8 +62,98 @@ function loadDifyEnv(app) {
   };
 }
 
+function splitQueryLine(value) {
+  const line = String(value || '').replace(/\s+/g, ' ').trim();
+  if (!line) return [];
+
+  const labelMatch = /^([^：:]{1,16}[：:])/.exec(line);
+  const prefix = labelMatch?.[1] || '';
+  const body = prefix ? line.slice(prefix.length).trim() : line;
+  const bodyLimit = Math.max(1, MAX_QUERY_LENGTH - prefix.length);
+  if (!body) return [prefix.slice(0, MAX_QUERY_LENGTH)];
+
+  const units = body.match(/[^。！？；;!?]+[。！？；;!?]?/gu) || [body];
+  const chunks = [];
+  let current = '';
+
+  const pushCurrent = () => {
+    if (!current) return;
+    chunks.push(`${prefix}${current}`.slice(0, MAX_QUERY_LENGTH));
+    current = '';
+  };
+
+  for (const rawUnit of units) {
+    let unit = String(rawUnit || '').trim();
+    if (!unit) continue;
+
+    while (unit.length > bodyLimit) {
+      pushCurrent();
+      chunks.push(`${prefix}${unit.slice(0, bodyLimit)}`.slice(0, MAX_QUERY_LENGTH));
+      unit = unit.slice(bodyLimit).trim();
+    }
+
+    if (!unit) continue;
+    const separator = current ? ' ' : '';
+    if (current.length + separator.length + unit.length <= bodyLimit) {
+      current = `${current}${separator}${unit}`;
+    } else {
+      pushCurrent();
+      current = unit;
+    }
+  }
+  pushCurrent();
+  return chunks.filter(Boolean);
+}
+
+function buildRetrievalQueries(value, maxQueries = DEFAULT_MAX_QUERY_COUNT) {
+  const limit = Math.max(1, Math.min(12, Number(maxQueries) || DEFAULT_MAX_QUERY_COUNT));
+  const lines = String(value || '')
+    .replace(/\r\n?/g, '\n')
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const groups = (lines.length ? lines : [value])
+    .map(splitQueryLine)
+    .filter((group) => group.length);
+  const queries = [];
+  const seen = new Set();
+
+  for (let index = 0; queries.length < limit; index += 1) {
+    let added = false;
+    for (const group of groups) {
+      const query = group[index];
+      if (!query) continue;
+      added = true;
+      if (!seen.has(query)) {
+        seen.add(query);
+        queries.push(query);
+        if (queries.length >= limit) break;
+      }
+    }
+    if (!added) break;
+  }
+  return queries;
+}
+
 function normalizeQuery(value) {
-  return String(value || '').replace(/\s+/g, ' ').trim().slice(0, MAX_QUERY_LENGTH);
+  return buildRetrievalQueries(value, 1)[0] || '';
+}
+
+async function mapWithConcurrency(items, concurrency, worker) {
+  const results = new Array(items.length);
+  let cursor = 0;
+  const runners = Array.from(
+    { length: Math.min(Math.max(1, concurrency), items.length) },
+    async () => {
+      while (cursor < items.length) {
+        const index = cursor;
+        cursor += 1;
+        results[index] = await worker(items[index], index);
+      }
+    },
+  );
+  await Promise.all(runners);
+  return results;
 }
 
 function summaryFromContent(content) {
@@ -88,6 +181,7 @@ function normalizeRecord(datasetId, record) {
   return {
     id: `dify::${datasetId}::${documentId || 'unknown'}::${segmentId}`,
     provider: 'dify',
+    authority: 'reference',
     dataset_id: datasetId,
     document_id: documentId,
     segment_id: segmentId,
@@ -168,31 +262,60 @@ function createDifyKnowledgeService({ app }) {
     };
   }
 
-  async function retrieve(datasetIds, query) {
+  async function retrieve(datasetIds, query, options = {}) {
     const ids = [...new Set((Array.isArray(datasetIds) ? datasetIds : []).map((id) => String(id || '').trim()).filter(Boolean))];
     if (!ids.length) return [];
-    const normalizedQuery = normalizeQuery(query);
-    if (!normalizedQuery) return [];
-    const results = await Promise.all(ids.map(async (datasetId) => {
-      const payload = await request(`/datasets/${encodeURIComponent(datasetId)}/retrieve`, {
-        method: 'POST',
-        body: JSON.stringify({ query: normalizedQuery }),
-      });
-      return (Array.isArray(payload?.records) ? payload.records : [])
-        .map((record) => normalizeRecord(datasetId, record))
-        .filter(Boolean);
-    }));
-    const seen = new Set();
-    return results.flat()
-      .sort((left, right) => Number(right.score || 0) - Number(left.score || 0))
-      .filter((item) => {
-        const fingerprint = crypto.createHash('sha256').update(item.content, 'utf-8').digest('hex');
-        if (seen.has(fingerprint)) return false;
-        seen.add(fingerprint);
-        return true;
-      });
-  }
+    const queries = buildRetrievalQueries(query, options.maxQueries);
+    if (!queries.length) return [];
+    const maxResults = Math.max(1, Math.min(200, Number(options.maxResults) || DEFAULT_MAX_RESULTS));
+    options.onQueryPlan?.({
+      queryCount: queries.length,
+      requestCount: queries.length * ids.length,
+      maxQueryLength: Math.max(...queries.map((item) => item.length)),
+    });
+    const requests = queries.flatMap((item) => ids.map((datasetId) => ({ datasetId, query: item })));
+    const results = await mapWithConcurrency(requests, RETRIEVAL_CONCURRENCY, async ({ datasetId, query: retrievalQuery }) => {
+      try {
+        const payload = await request(`/datasets/${encodeURIComponent(datasetId)}/retrieve`, {
+          method: 'POST',
+          body: JSON.stringify({ query: retrievalQuery }),
+        });
+        const items = (Array.isArray(payload?.records) ? payload.records : [])
+          .map((record) => normalizeRecord(datasetId, record))
+          .filter(Boolean);
+        options.onQueryResult?.({ datasetId, queryLength: retrievalQuery.length, hitCount: items.length });
+        return { ok: true, datasetId, items };
+      } catch (error) {
+        options.onQueryError?.({ datasetId, queryLength: retrievalQuery.length, error });
+        return { ok: false, datasetId, items: [], error };
+      }
+    });
+    const successful = results.filter((result) => result.ok);
+    if (!successful.length && results.length) {
+      throw results.find((result) => result.error)?.error || new Error('Dify 检索失败');
+    }
 
+    const fused = new Map();
+    for (const result of successful) {
+      result.items.forEach((item, rank) => {
+        const fingerprint = crypto.createHash('sha256').update(item.content, 'utf-8').digest('hex');
+        const existing = fused.get(fingerprint);
+        const fusionScore = (existing?.fusion_score || 0) + (1 / (60 + rank + 1));
+        const datasetIdsForItem = new Set(existing?.dataset_ids || []);
+        datasetIdsForItem.add(item.dataset_id);
+        const bestItem = !existing || Number(item.score || 0) > Number(existing.score || 0) ? item : existing;
+        fused.set(fingerprint, {
+          ...bestItem,
+          dataset_ids: [...datasetIdsForItem],
+          fusion_score: fusionScore,
+        });
+      });
+    }
+    return [...fused.values()]
+      .sort((left, right) => Number(right.fusion_score || 0) - Number(left.fusion_score || 0)
+        || Number(right.score || 0) - Number(left.score || 0))
+      .slice(0, maxResults);
+  }
   function getStatus() {
     const config = loadDifyEnv(app);
     return {
@@ -212,6 +335,7 @@ module.exports = {
   createDifyKnowledgeService,
   _internals: {
     loadDifyEnv,
+    buildRetrievalQueries,
     normalizeQuery,
     normalizeRecord,
   },

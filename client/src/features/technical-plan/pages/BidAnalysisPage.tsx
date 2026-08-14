@@ -19,6 +19,8 @@ interface BidAnalysisPageProps {
   tasks: BidAnalysisTasks;
   task?: BackgroundTaskState;
   progress: number;
+  requirementLedgerConfirmed: boolean;
+  requirementLedgerConfirmedAt?: string;
   onProgressChange: (progress: number) => void;
   onConfigSaved: (state: TechnicalPlanState) => void;
 }
@@ -73,8 +75,9 @@ function getModeLabel(mode: BidAnalysisMode) {
 }
 
 const taskGroups = [
-  { title: '关键项', ids: ['projectOverview', 'techRequirements', 'projectInfo', 'partAInfo', 'deliveryAndServiceRequirements', 'responseFileRequirements'] },
-  { title: '采购项', ids: ['procurementList'] },
+  { title: '关键项', ids: ['projectOverview', 'techRequirements', 'projectInfo', 'partAInfo', 'deliveryAndServiceRequirements'] },
+  { title: '权威约束', ids: ['outlineRequirements', 'personnelRequirements', 'equipmentRequirements', 'technicalParameterRequirements'] },
+  { title: '采购与响应', ids: ['procurementList', 'responseFileRequirements'] },
   { title: '投标流程', ids: ['keyInfo', 'marginInfo', 'openBid'] },
   { title: '评审要求', ids: ['qualificationReview', 'complianceCheck', 'evaluationBid', 'businessScoring'] },
   { title: '主体与合同', ids: ['agentInfo', 'discardedBids', 'signingProcess', 'terminationCondition'] },
@@ -93,6 +96,8 @@ const jsonFieldLabels: Record<string, string> = {
   project_type: '项目类型',
   project_budget: '项目预算',
   project_address: '项目地址',
+  required_titles: '招标指定一级标题',
+  requirements: '权威要求与原文证据',
   company_name: '公司名称',
   address: '地址',
   contact_person: '联系人',
@@ -209,10 +214,13 @@ function BidAnalysisPage({
   tasks,
   task,
   progress,
+  requirementLedgerConfirmed,
+  requirementLedgerConfirmedAt,
   onProgressChange,
   onConfigSaved,
 }: BidAnalysisPageProps) {
   const [running, setRunning] = useState(false);
+  const [confirmingRequirements, setConfirmingRequirements] = useState(false);
   const [fullRerunLocked, setFullRerunLocked] = useState(false);
   const [fullRerunSeenRunning, setFullRerunSeenRunning] = useState(false);
   const [selectedTaskId, setSelectedTaskId] = useState('projectOverview');
@@ -258,8 +266,10 @@ function BidAnalysisPage({
   const progressMessage = isPromptCacheOptimizing
     ? '正在优化提示词缓存'
     : requiredDone && taskRunning
-      ? '关键项已解析完成，等待当前解析任务结束后进入下一步。'
-      : requiredDone ? '招标文件解析任务已结束，可以进入下一步。' : '等待关键解析项完成';
+      ? '关键项已解析完成，等待当前解析任务结束后确认权威要求。'
+      : requiredDone && requirementLedgerConfirmed
+        ? '权威要求已人工确认，可以进入下一步。'
+        : requiredDone ? '请逐项核对解析结果，并确认权威要求。' : '等待全部关键项和权威约束解析成功。';
   const bidSectionConfigLabel = bidSectionMode === 'multiple'
     ? selectedSectionTitle ? `多标段 · ${selectedSectionTitle}` : '多标段 · 待选择'
     : '单标段';
@@ -524,6 +534,23 @@ function BidAnalysisPage({
     }
   };
 
+  const confirmTenderRequirements = async () => {
+    if (!requiredDone || taskRunning) {
+      showToast('请等待全部权威约束解析成功并结束运行', 'info');
+      return;
+    }
+    try {
+      setConfirmingRequirements(true);
+      const saved = await window.yibiao?.technicalPlan.confirmTenderRequirements();
+      if (saved) onConfigSaved(saved);
+      showToast('权威要求已确认，后续目录和正文将以此为准', 'success');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : '确认权威要求失败', 'error');
+    } finally {
+      setConfirmingRequirements(false);
+    }
+  };
+
   const copyActiveResult = async () => {
     if (!activeTaskContent) {
       showToast('当前没有可复制的解析结果', 'info');
@@ -588,6 +615,15 @@ function BidAnalysisPage({
               <path d="M12 15.5A3.5 3.5 0 1 0 12 8a3.5 3.5 0 0 0 0 7.5Z" />
               <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.05.05a2 2 0 0 1-2.83 2.83l-.05-.05a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.04 1.56V21a2 2 0 0 1-4 0v-.08a1.7 1.7 0 0 0-1.04-1.56 1.7 1.7 0 0 0-1.87.34l-.05.05a2 2 0 0 1-2.83-2.83l.05-.05A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.56-1.04H3a2 2 0 0 1 0-4h.08A1.7 1.7 0 0 0 4.6 8.93a1.7 1.7 0 0 0-.34-1.87l-.05-.05a2 2 0 0 1 2.83-2.83l.05.05a1.7 1.7 0 0 0 1.87.34A1.7 1.7 0 0 0 10 3.01V3a2 2 0 0 1 4 0v.08a1.7 1.7 0 0 0 1.04 1.56 1.7 1.7 0 0 0 1.87-.34l.05-.05a2 2 0 0 1 2.83 2.83l-.05.05a1.7 1.7 0 0 0-.34 1.87 1.7 1.7 0 0 0 1.56 1.04H21a2 2 0 0 1 0 4h-.08A1.7 1.7 0 0 0 19.4 15Z" />
             </svg>
+          </button>
+          <button
+            type="button"
+            className="secondary-action"
+            onClick={() => { void confirmTenderRequirements(); }}
+            disabled={!requiredDone || taskRunning || confirmingRequirements || requirementLedgerConfirmed}
+            title={requirementLedgerConfirmedAt ? `确认时间：${new Date(requirementLedgerConfirmedAt).toLocaleString()}` : '核对解析结果后确认，确认后才能进入目录生成'}
+          >
+            {confirmingRequirements ? '确认中...' : requirementLedgerConfirmed ? '权威要求已确认' : '确认权威要求'}
           </button>
           <button type="button" className="primary-action" onClick={openSettingsDialog} disabled={taskRunning}>
             {sectionTaskRunning ? '识别中...' : taskRunning ? '解析中...' : failedTaskCount > 0 ? `重试失败项(${failedTaskCount})` : progress > 0 ? '重新解析' : '开始解析'}

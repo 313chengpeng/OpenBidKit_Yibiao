@@ -353,6 +353,10 @@ export interface TechnicalPlanState {
   bidAnalysisSelectedTaskIds: string[];
   bidAnalysisTasks: BidAnalysisTasks;
   bidAnalysisProgress: number;
+  requirementLedgerHash: string;
+  requirementLedgerConfirmedHash: string;
+  requirementLedgerConfirmedAt?: string;
+  requirementLedgerConfirmed: boolean;
   bidSectionMode: BidSectionMode;
   bidSections: DetectedBidSection[];
   bidSectionExtractionStatus: BidSectionExtractionStatus;

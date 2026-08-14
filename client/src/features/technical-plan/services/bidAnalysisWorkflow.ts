@@ -26,6 +26,34 @@ ${outputJson}
 仅输出 JSON，不要输出其他内容。`;
 }
 
+function requirementLedgerTask(title: string, goals: string, options: { includeRequiredTitles?: boolean } = {}) {
+  const requiredTitlesField = options.includeRequiredTitles
+    ? '  "required_titles": ["招标文件明确要求的一级标题，按原文顺序；没有则为空数组"],\n'
+    : '';
+  return `任务：${title}
+
+目标：${goals}
+
+要求：
+1. 只提取招标文件明确出现的要求，不使用常识补充，不把历史经验写成当前项目要求。
+2. 每项必须尽量保留章节、页码和原文关键句；无法确认页码时留空字符串。
+3. constraint_type 只能填写 mandatory、minimum、recommended 或 prohibited。
+4. 没有找到时 requirements 返回空数组。
+5. 仅输出可由 JSON.parse 解析的 JSON，不要输出代码块或说明。
+
+输出格式：
+{
+${requiredTitlesField}  "requirements": [
+    {
+      "title": "要求名称",
+      "requirement": "准确、完整的要求内容",
+      "constraint_type": "mandatory",
+      "scope": ["适用章节或对象"],
+      "source": { "section": "章节或条款", "page": "页码", "quote": "原文关键句" }
+    }
+  ]
+}`;
+}
 export const bidAnalysisTasks: BidAnalysisTaskDefinition[] = [
   {
     id: 'projectOverview',
@@ -119,6 +147,38 @@ export const bidAnalysisTasks: BidAnalysisTaskDefinition[] = [
   "training_requirements": "培训要求",
   "documentation_requirements": "资料/文档交付要求"
 }`),
+  },
+  {
+    id: 'outlineRequirements',
+    label: '投标文件目录要求',
+    description: '提取招标文件明确给定的投标文件目录、一级标题、顺序和文件组成要求。',
+    required: true,
+    output: 'json',
+    buildTaskPrompt: () => requirementLedgerTask('提取投标文件目录要求', '识别招标文件是否明确规定投标文件或技术方案的目录、一级标题、标题顺序、固定模板和必须包含的章节。区分强制目录、最低目录和推荐目录。', { includeRequiredTitles: true }),
+  },
+  {
+    id: 'personnelRequirements',
+    label: '人员要求',
+    description: '提取岗位、人数、资格证书、经验、驻场和人员配置要求。',
+    required: true,
+    output: 'json',
+    buildTaskPrompt: () => requirementLedgerTask('提取人员要求', '提取项目负责人、项目经理、技术负责人、安全员、实施人员、运维人员等岗位的人数、资格证书、工作经验、驻场和到岗要求，包含评分表与技术要求中的人员条件。'),
+  },
+  {
+    id: 'equipmentRequirements',
+    label: '设备要求',
+    description: '提取设备、仪器、工具、车辆的数量、规格、性能和投入要求。',
+    required: true,
+    output: 'json',
+    buildTaskPrompt: () => requirementLedgerTask('提取设备要求', '提取拟投入设备、机械、仪器、工具、车辆及物资的名称、数量、规格参数、性能、检测能力和到场要求，包含采购清单与评分表中的设备条件。'),
+  },
+  {
+    id: 'technicalParameterRequirements',
+    label: '技术参数要求',
+    description: '提取必须响应的技术参数、功能、性能、标准和禁止偏离项。',
+    required: true,
+    output: 'json',
+    buildTaskPrompt: () => requirementLedgerTask('提取技术参数要求', '提取必须响应的技术参数、规格、功能、性能指标、执行标准、兼容要求、验收指标和禁止负偏离项；保留数值、单位和适用对象。'),
   },
   {
     id: 'procurementList',

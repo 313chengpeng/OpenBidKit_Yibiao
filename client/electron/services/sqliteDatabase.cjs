@@ -3,7 +3,7 @@ const path = require('node:path');
 const Database = require('better-sqlite3');
 const { getWorkspaceDatabasePath } = require('../utils/paths.cjs');
 
-const schemaVersion = 22;
+const schemaVersion = 23;
 
 function createInitialSchema(db) {
   db.exec(`
@@ -45,6 +45,8 @@ function createInitialSchema(db) {
       outline_word_control_snapshot_json TEXT,
       knowledge_source_mode TEXT NOT NULL DEFAULT 'local',
       reference_dify_dataset_ids_json TEXT,
+      requirement_ledger_confirmed_hash TEXT,
+      requirement_ledger_confirmed_at TEXT,
       outline_project_name TEXT,
       outline_project_overview TEXT,
       content_generation_options_json TEXT,
@@ -352,6 +354,11 @@ function createTaskLogsAndIllustrationItemsSchema(db) {
 function addTechnicalPlanDifyKnowledgeSource(db) {
   addColumnIfMissing(db, 'technical_plan_meta', 'knowledge_source_mode', "TEXT NOT NULL DEFAULT 'local'");
   addColumnIfMissing(db, 'technical_plan_meta', 'reference_dify_dataset_ids_json', 'TEXT');
+}
+
+function addTechnicalPlanRequirementLedgerConfirmation(db) {
+  addColumnIfMissing(db, 'technical_plan_meta', 'requirement_ledger_confirmed_hash', 'TEXT');
+  addColumnIfMissing(db, 'technical_plan_meta', 'requirement_ledger_confirmed_at', 'TEXT');
 }
 
 function removeLegacyTechnicalPlanIllustrationType(db) {
@@ -1227,6 +1234,14 @@ const schemaHealthColumnGroups = [
         reference_dify_dataset_ids_json: 'TEXT',
     },
   },
+  {
+    version: 23,
+    table: 'technical_plan_meta',
+    columns: {
+      requirement_ledger_confirmed_hash: 'TEXT',
+      requirement_ledger_confirmed_at: 'TEXT',
+    },
+  },
 ];
 
 function quoteIdentifier(value) {
@@ -1400,6 +1415,11 @@ const migrations = [
       version: 22,
       description: '技术方案新增 Dify 只读知识库来源配置',
       up: addTechnicalPlanDifyKnowledgeSource,
+  },
+  {
+    version: 23,
+    description: '技术方案新增招标权威要求人工确认状态',
+    up: addTechnicalPlanRequirementLedgerConfirmation,
   },
 ];
 
