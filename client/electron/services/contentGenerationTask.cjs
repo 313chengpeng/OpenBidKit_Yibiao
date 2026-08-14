@@ -2105,6 +2105,50 @@ function loadContentKnowledgeReferences(knowledgeBaseService, documentIds, log) 
   }
 }
 
+async function loadDifyContentKnowledge(difyKnowledgeService, datasetIds, leaves, projectOverview, log) {
+  if (!datasetIds.length) {
+    log('本次正文生成未选择 Dify 知识库。');
+    return { items: [], contentMap: new Map(), itemsBySection: new Map() };
+  }
+  if (!difyKnowledgeService?.retrieve) {
+    throw new Error('Dify 知识库服务尚未初始化');
+  }
+  const uniqueItems = new Map();
+  const contentMap = new Map();
+  const itemsBySection = new Map();
+  const contexts = Array.isArray(leaves) ? leaves : [];
+  const concurrency = 4;
+  for (let offset = 0; offset < contexts.length; offset += concurrency) {
+    const batch = contexts.slice(offset, offset + concurrency);
+    const results = await Promise.all(batch.map(async ({ item, parentChapters }) => {
+      const parentTitles = (parentChapters || []).map((parent) => parent.title).filter(Boolean).join('；');
+      const query = `章节：${parentTitles ? `${parentTitles}；` : ''}${item.title || ''}\n要求：${item.description || ''}\n项目：${projectOverview || ''}`;
+      return {
+        itemId: item.id,
+        hits: await difyKnowledgeService.retrieve(datasetIds, query),
+      };
+    }));
+    for (const result of results) {
+      const sectionItems = [];
+      for (const hit of result.hits) {
+        const lightItem = { id: hit.id, title: hit.title, resume: hit.resume };
+        sectionItems.push(lightItem);
+        uniqueItems.set(hit.id, lightItem);
+        if (hit.content) contentMap.set(hit.id, { content: hit.content });
+      }
+      itemsBySection.set(result.itemId, sectionItems);
+    }
+  }
+  log(uniqueItems.size
+    ? `Dify 已为 ${contexts.length} 个小节召回 ${uniqueItems.size} 条去重知识片段。`
+    : 'Dify 未召回正文参考资料。');
+  return {
+    items: [...uniqueItems.values()],
+    contentMap,
+    itemsBySection,
+  };
+}
+
 function resolveKnowledgeContents(itemIds, knowledgeContentMap) {
   const selected = new Set(normalizeKnowledgeItemIds(itemIds));
   if (!selected.size || !(knowledgeContentMap instanceof Map) || !knowledgeContentMap.size) {
@@ -2884,7 +2928,7 @@ function withSection(sections, item, partial) {
   };
 }
 
-async function runContentGenerationTask({ aiService, agentService, workspaceStore, knowledgeBaseService, updateTask: updateManagedTask, checkpointTask: checkpointManagedTask, payload, taskControl, previousState }) {
+async function runContentGenerationTask({ aiService, agentService, workspaceStore, knowledgeBaseService, difyKnowledgeService, updateTask: updateManagedTask, checkpointTask: checkpointManagedTask, payload, taskControl, previousState }) {
   const resume = Boolean(payload.resume);
   const storedPlan = resume ? (previousState || {}) : (workspaceStore.loadTechnicalPlan() || {});
   const wordControl = normalizeOutlineWordControlSnapshot(storedPlan.outlineWordControlSnapshot);
@@ -2968,6 +3012,8 @@ async function runContentGenerationTask({ aiService, agentService, workspaceStor
   const tableRequirement = normalizeTableRequirement(generationOptions.tableRequirement ?? generationOptions.table_requirement);
   let maxTables = maxTablesForRequirement(tableRequirement, leaves.length);
   const referenceKnowledgeDocumentIds = normalizeReferenceDocumentIds(storedPlan);
+  const knowledgeSourceMode = storedPlan.knowledgeSourceMode === 'dify' ? 'dify' : 'local';
+  const referenceDifyDatasetIds = Array.isArray(storedPlan.referenceDifyDatasetIds) ? storedPlan.referenceDifyDatasetIds : [];
   const enableConsistencyAudit = Boolean(generationOptions.enableConsistencyAudit ?? generationOptions.enable_consistency_audit ?? true);
   const requestedConsistencyRepairMode = normalizeConsistencyRepairMode(generationOptions.consistencyRepairMode ?? generationOptions.consistency_repair_mode);
   const consistencyRepairMode = targetItemId ? 'normal' : requestedConsistencyRepairMode;
@@ -3052,6 +3098,7 @@ async function runContentGenerationTask({ aiService, agentService, workspaceStor
   const contentPlans = new Map();
   let storedContentPlans = pruneContentGenerationPlans(fullRegenerate ? {} : storedPlan.contentGenerationPlans, leaves);
   let knowledgeItems = [];
+  let knowledgeItemsBySection = new Map();
   let allowedKnowledgeItemIds = new Set();
   let knowledgeContentMap = new Map();
   let sections = createInitialSections(leaves, fullRegenerate ? {} : storedPlan.contentGenerationSections);
@@ -3401,12 +3448,25 @@ async function runContentGenerationTask({ aiService, agentService, workspaceStor
     publishTaskUpdate({ status: 'running', progress: progressFor(leaves, sections), logs, stats: statsSnapshot() });
   }
 
-  const knowledgeReferences = loadContentKnowledgeReferences(knowledgeBaseService, referenceKnowledgeDocumentIds, (message) => {
-    logs = [...logs, message];
-  });
-  knowledgeItems = knowledgeReferences.items;
+  if (knowledgeSourceMode === 'dify') {
+    const difyKnowledge = await loadDifyContentKnowledge(
+      difyKnowledgeService,
+      referenceDifyDatasetIds,
+      leaves,
+      projectOverview,
+      (message) => { logs = [...logs, message]; },
+    );
+    knowledgeItems = difyKnowledge.items;
+    knowledgeItemsBySection = difyKnowledge.itemsBySection;
+    knowledgeContentMap = difyKnowledge.contentMap;
+  } else {
+    const knowledgeReferences = loadContentKnowledgeReferences(knowledgeBaseService, referenceKnowledgeDocumentIds, (message) => {
+      logs = [...logs, message];
+    });
+    knowledgeItems = knowledgeReferences.items;
+    knowledgeContentMap = knowledgeReferences.contentMap;
+  }
   allowedKnowledgeItemIds = new Set(knowledgeItems.map((item) => item.id));
-  knowledgeContentMap = knowledgeReferences.contentMap;
 
   function getLeafContentForWords(item) {
     const section = sections[item.id];
@@ -3866,6 +3926,7 @@ async function runContentGenerationTask({ aiService, agentService, workspaceStor
 
   async function planOne(context, { preservedOriginalMaterial } = {}) {
     const { item, parentChapters, siblingChapters } = context;
+    const chapterKnowledgeItems = knowledgeItemsBySection.get(item.id) || knowledgeItems;
     let contentPlan;
 
     try {
@@ -3881,7 +3942,7 @@ async function runContentGenerationTask({ aiService, agentService, workspaceStor
           tableRequirement,
           maxTables,
           tableTotalSections: leaves.length,
-          knowledgeItems,
+          knowledgeItems: chapterKnowledgeItems,
         }),
         logTitle: `正文编排-${item.id}-${item.title || '未命名章节'}`,
         progressLabel: '正文编排决策',

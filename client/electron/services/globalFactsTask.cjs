@@ -236,6 +236,24 @@ function loadKnowledgeItems(knowledgeBaseService, documentIds, log) {
   return items;
 }
 
+async function loadDifyKnowledgeItems(difyKnowledgeService, datasetIds, query, log) {
+  if (!datasetIds.length) {
+    log('未选择 Dify 知识库，本次不使用服务器知识库。', 12);
+    return [];
+  }
+  if (!difyKnowledgeService?.retrieve) {
+    throw new Error('Dify 知识库服务尚未初始化');
+  }
+  log(`正在从 ${datasetIds.length} 个 Dify 知识库检索全局事实参考资料。`, 12);
+  const items = await difyKnowledgeService.retrieve(datasetIds, query);
+  log(items.length ? `Dify 已召回 ${items.length} 条完整知识片段。` : 'Dify 未召回可用知识片段。', 14);
+  return items;
+}
+
+function buildGlobalFactsDifyQuery(storedPlan) {
+  return `项目：${storedPlan.projectOverview || ''}\n技术要求：${storedPlan.techRequirements || ''}`;
+}
+
 function formatKnowledgeItemForPrompt(item, index) {
   return `<knowledge_item index="${index + 1}" id="${singleLine(item?.id)}">
 标题：${singleLine(item?.title)}
@@ -771,7 +789,7 @@ async function finalizeGlobalFacts(aiService, context, log) {
   });
 }
 
-async function runGlobalFactsTask({ aiService, workspaceStore, knowledgeBaseService, updateTask, checkpointTask }) {
+async function runGlobalFactsTask({ aiService, workspaceStore, knowledgeBaseService, difyKnowledgeService, updateTask, checkpointTask }) {
   let logs = ['开始生成全局事实变量。'];
   let currentProgress = 5;
   function log(message, progress = currentProgress) {
@@ -809,12 +827,16 @@ async function runGlobalFactsTask({ aiService, workspaceStore, knowledgeBaseServ
   });
 
   const referenceKnowledgeDocumentIds = normalizeReferenceDocumentIds(storedPlan);
+  const knowledgeSourceMode = storedPlan.knowledgeSourceMode === 'dify' ? 'dify' : 'local';
+  const referenceDifyDatasetIds = Array.isArray(storedPlan.referenceDifyDatasetIds) ? storedPlan.referenceDifyDatasetIds : [];
   const bidAnalysisFactsText = formatBidAnalysisFactsForPrompt(storedPlan);
   log('正在读取招标文件、Step02 解析结果、目录和参考知识库。', 10);
   if (isExpansionWorkflow) {
     log('已读取原方案，本次将优先从原方案抽取全局事实变量。', 18);
   }
-  const knowledgeItems = loadKnowledgeItems(knowledgeBaseService, referenceKnowledgeDocumentIds, log);
+  const knowledgeItems = knowledgeSourceMode === 'dify'
+    ? await loadDifyKnowledgeItems(difyKnowledgeService, referenceDifyDatasetIds, buildGlobalFactsDifyQuery(storedPlan), log)
+    : loadKnowledgeItems(knowledgeBaseService, referenceKnowledgeDocumentIds, log);
 
   const selectedSectionId = storedPlan.tenderFile?.selectedSectionId;
   const selectedSection = selectedSectionId && Array.isArray(storedPlan.bidSections)

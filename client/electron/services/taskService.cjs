@@ -143,7 +143,9 @@ function createTechnicalPlanUserSettings(state = {}) {
     'outlineExpansionMode',
     'outlineWordControlOptions',
     'outlineWordControlSnapshot',
+    'knowledgeSourceMode',
     'referenceKnowledgeDocumentIds',
+    'referenceDifyDatasetIds',
     'contentGenerationOptions',
   ]);
   return settings;
@@ -225,7 +227,7 @@ function createTask(type, payload) {
   };
 }
 
-function createTaskService({ aiService, agentService, autoConfirmationService, technicalPlanStore, rejectionCheckStore, duplicateCheckStore, knowledgeBaseService, duplicateCheckService }) {
+function createTaskService({ aiService, agentService, autoConfirmationService, technicalPlanStore, rejectionCheckStore, duplicateCheckStore, knowledgeBaseService, difyKnowledgeService, duplicateCheckService }) {
   const subscribers = new Set();
   const callbackSubscribers = new Set();
   const activeTasks = new Map();
@@ -284,7 +286,9 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
         'outlineData',
         'outlineWordControlSnapshot',
         'outlineGenerationTask',
+        'knowledgeSourceMode',
         'referenceKnowledgeDocumentIds',
+        'referenceDifyDatasetIds',
         'globalFactsTask',
         'globalFacts',
         'contentGenerationTask',
@@ -302,9 +306,11 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
         'outlineExpansionMode',
         'outlineWordControlOptions',
         'outlineWordControlSnapshot',
+        'knowledgeSourceMode',
         'referenceKnowledgeDocumentIds',
         'globalFactsTask',
         'globalFacts',
+        'referenceDifyDatasetIds',
       ]);
       if (task.status === 'success' || state.outlineData === null || hasOwn(eventPatch, 'outlineData')) {
         copyPatchFields(patch, state, [
@@ -723,7 +729,7 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
       () => createAgentUserTaskContext(type, definition, payload, currentTask),
       { queueScopeId, signal: taskControl.signal },
     );
-    runner({ aiService: runnerAiService, agentService: runnerAgentService, workspaceStore: runnerWorkspaceStore, knowledgeBaseService, updateTask, checkpointTask, payload, taskControl, previousState }).catch((error) => {
+    runner({ aiService: runnerAiService, agentService: runnerAgentService, workspaceStore: runnerWorkspaceStore, knowledgeBaseService, difyKnowledgeService, updateTask, checkpointTask, payload, taskControl, previousState }).catch((error) => {
       if (!taskControl.signal.aborted) {
         checkpointTask({ status: 'error', error: error.message || '任务执行失败' });
       }
@@ -1063,7 +1069,9 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
         outlineData: null,
         outlineWordControlSnapshot: undefined,
         outlineGenerationTask: undefined,
+        knowledgeSourceMode: 'local',
         referenceKnowledgeDocumentIds: [],
+        referenceDifyDatasetIds: [],
         globalFactsTask: undefined,
         globalFacts: [],
         contentGenerationTask: undefined,
@@ -1084,7 +1092,9 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
         outlineMode,
         outlineExpansionMode: payload?.outline_expansion_mode === 'original-only' ? 'original-only' : 'ai-complement',
         outlineWordControlOptions: payload?.word_control_options,
+        knowledgeSourceMode: payload?.knowledge_source_mode === 'dify' ? 'dify' : 'local',
         referenceKnowledgeDocumentIds: Array.isArray(payload?.reference_knowledge_document_ids) ? payload.reference_knowledge_document_ids : [],
+        referenceDifyDatasetIds: Array.isArray(payload?.reference_dify_dataset_ids) ? payload.reference_dify_dataset_ids : [],
         outlineData: null,
         outlineWordControlSnapshot: undefined,
         globalFactsTask: undefined,

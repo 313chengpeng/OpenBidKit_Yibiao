@@ -70,6 +70,9 @@ CREATE TABLE IF NOT EXISTS technical_plan_meta (
   -- v18 Step03 当前可编辑字数设置，以及当前目录生成成功时固化的生效快照。
   outline_word_control_options_json TEXT,
   outline_word_control_snapshot_json TEXT,
+  -- v19 参考知识库来源：local / dify，以及 Dify dataset ID 列表。
+  knowledge_source_mode TEXT NOT NULL DEFAULT 'local',
+  reference_dify_dataset_ids_json TEXT,
   outline_project_name TEXT,
   outline_project_overview TEXT,
   content_generation_options_json TEXT,

@@ -486,6 +486,27 @@ function buildKnowledgeFiles(knowledgeBaseService, documentIds) {
     .filter((file) => file.content);
 }
 
+function normalizeDifyDatasetIds(storedPlan) {
+  const ids = storedPlan?.referenceDifyDatasetIds || [];
+  return Array.isArray(ids) ? [...new Set(ids.map((id) => String(id || '').trim()).filter(Boolean))] : [];
+}
+
+async function buildDifyKnowledgeFiles(difyKnowledgeService, datasetIds, storedPlan) {
+  if (!datasetIds.length) return [];
+  if (!difyKnowledgeService?.retrieve) throw new Error('Dify 知识库服务尚未初始化');
+  const query = [storedPlan?.projectOverview, storedPlan?.techRequirements]
+    .map((value) => String(value || '').trim())
+    .filter(Boolean)
+    .join('\n');
+  if (!query) return [];
+  const items = await difyKnowledgeService.retrieve(datasetIds, query);
+  if (!items.length) return [];
+  return [{
+    path: '参考知识库/Dify召回资料.md',
+    content: items.map((item, index) => `## ${index + 1}. ${item.title || 'Dify 知识片段'}\n\n${item.content || ''}`).join('\n\n'),
+  }];
+}
+
 function createInitialPrompt(taskInstruction) {
   return `请只在当前工作目录内工作。
 
@@ -619,7 +640,7 @@ function createOutlineReviewPrompt({ targetLeafCount, actualLeafCount, allowRoot
 }
 
 // 运行 V2 目录业务任务；完整 Agent 执行之间通过程序确认衔接并复用同一持久 Session。
-async function runOutlineGenerationTaskV2({ agentService, workspaceStore, knowledgeBaseService, updateTask, checkpointTask, taskControl, payload }) {
+async function runOutlineGenerationTaskV2({ agentService, workspaceStore, knowledgeBaseService, difyKnowledgeService, updateTask, checkpointTask, taskControl, payload }) {
   const storedPlan = workspaceStore.loadTechnicalPlan() || {};
   const restoringOutlineSelection = payload?.agent_resume?.phase === 'outline-selection';
   const hasOriginalPlan = Boolean(storedPlan.originalPlanFile);
@@ -629,7 +650,11 @@ async function runOutlineGenerationTaskV2({ agentService, workspaceStore, knowle
   const wordControlOptions = normalizeWordControlOptions(payload?.word_control_options || storedPlan.outlineWordControlOptions);
   const targetLeafCount = deriveTargetLeafCount(wordControlOptions);
   const referenceDocumentIds = normalizeReferenceDocumentIds(storedPlan);
-  const knowledgeFiles = buildKnowledgeFiles(knowledgeBaseService, referenceDocumentIds);
+  const knowledgeSourceMode = storedPlan.knowledgeSourceMode === 'dify' ? 'dify' : 'local';
+  const referenceDifyDatasetIds = normalizeDifyDatasetIds(storedPlan);
+  const knowledgeFiles = knowledgeSourceMode === 'dify'
+    ? await buildDifyKnowledgeFiles(difyKnowledgeService, referenceDifyDatasetIds, storedPlan)
+    : buildKnowledgeFiles(knowledgeBaseService, referenceDocumentIds);
   const jsonValidationSchemas = {
     [OUTLINE_OUTPUT_FILE]: OUTLINE_JSON_SCHEMA,
     [TECHNICAL_SCORE_GROUPS_FILE]: TECHNICAL_SCORE_GROUPS_SCHEMA,
@@ -682,6 +707,8 @@ async function runOutlineGenerationTaskV2({ agentService, workspaceStore, knowle
           run_id: task.task_id,
           resume_payload: {
             reference_knowledge_document_ids: referenceDocumentIds,
+            knowledge_source_mode: knowledgeSourceMode,
+            reference_dify_dataset_ids: referenceDifyDatasetIds,
             outline_mode: storedPlan.outlineMode,
             outline_expansion_mode: storedPlan.outlineExpansionMode,
             word_control_options: wordControlOptions,

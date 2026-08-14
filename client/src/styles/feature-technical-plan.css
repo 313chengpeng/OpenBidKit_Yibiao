@@ -2763,6 +2763,58 @@
   overflow: hidden;
 }
 
+.outline-knowledge-source-body {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 10px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.outline-knowledge-source-switch {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  padding: 4px;
+  background: rgba(241, 245, 249, 0.9);
+  border: 1px solid rgba(203, 213, 225, 0.72);
+  border-radius: 12px;
+}
+
+.outline-knowledge-source-switch button {
+  padding: 8px 12px;
+  color: #64748b;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+  border-radius: 9px;
+}
+
+.outline-knowledge-source-switch button.is-selected {
+  color: #0f172a;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.12);
+}
+
+.outline-knowledge-source-switch button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.outline-dify-dataset-list {
+  padding: 10px;
+  overflow: auto;
+}
+
+.outline-dify-error {
+  display: grid;
+  gap: 12px;
+  justify-items: center;
+}
+
 .outline-generation-config-card .content-regenerate-actions {
   align-items: center;
   padding-top: 14px;

@@ -147,6 +147,10 @@ const bridge = {
       return () => ipcRenderer.removeListener('knowledge-base:event', listener);
     },
   },
+  difyKnowledge: {
+    getStatus: () => ipcRenderer.invoke('dify-knowledge:get-status'),
+    listDatasets: () => ipcRenderer.invoke('dify-knowledge:list-datasets'),
+  },
   technicalPlan: {
     loadState: () => ipcRenderer.invoke('technical-plan:load-state'),
     importTenderDocument: () => ipcRenderer.invoke('technical-plan:import-tender-document'),

@@ -47,7 +47,9 @@ const initialState = {
   outlineExpansionMode: 'ai-complement',
   outlineWordControlOptions: { ...defaultOutlineWordControlOptions },
   outlineWordControlSnapshot: undefined,
+  knowledgeSourceMode: 'local',
   referenceKnowledgeDocumentIds: [],
+  referenceDifyDatasetIds: [],
   bidSectionExtractionTask: undefined,
   bidAnalysisTask: undefined,
   outlineGenerationTask: undefined,
@@ -293,6 +295,14 @@ function isValidOutlineMode(value) {
 
 function isValidOutlineExpansionMode(value) {
   return value === 'original-only' || value === 'ai-complement';
+}
+
+function normalizeKnowledgeSourceMode(value) {
+  return value === 'dify' ? 'dify' : 'local';
+}
+
+function normalizeKnowledgeSourceIds(value) {
+  return [...new Set((Array.isArray(value) ? value : []).map((id) => String(id || '').trim()).filter(Boolean))];
 }
 
 function collectLeafItems(items) {
@@ -1733,6 +1743,8 @@ function createTechnicalPlanStore({ app, db, fileService, agentService, taskLogS
     if (hasOwn(partial, 'outlineMode') && isValidOutlineMode(partial.outlineMode)) metaUpdates.outline_mode = partial.outlineMode;
     if (hasOwn(partial, 'outlineExpansionMode') && isValidOutlineExpansionMode(partial.outlineExpansionMode)) metaUpdates.outline_expansion_mode = partial.outlineExpansionMode;
     if (hasOwn(partial, 'outlineWordControlOptions')) metaUpdates.outline_word_control_options_json = jsonOrNull(normalizeOutlineWordControlOptions(partial.outlineWordControlOptions));
+    if (hasOwn(partial, 'knowledgeSourceMode')) metaUpdates.knowledge_source_mode = normalizeKnowledgeSourceMode(partial.knowledgeSourceMode);
+    if (hasOwn(partial, 'referenceDifyDatasetIds')) metaUpdates.reference_dify_dataset_ids_json = jsonOrNull(normalizeKnowledgeSourceIds(partial.referenceDifyDatasetIds));
     if (hasOwn(partial, 'outlineWordControlSnapshot')) {
       metaUpdates.outline_word_control_snapshot_json = partial.outlineWordControlSnapshot === undefined || partial.outlineWordControlSnapshot === null
         ? null
@@ -1845,7 +1857,9 @@ function createTechnicalPlanStore({ app, db, fileService, agentService, taskLogS
       outlineWordControlSnapshot: meta.outline_word_control_snapshot_json
         ? normalizeOutlineWordControlOptions(safeJsonParse(meta.outline_word_control_snapshot_json, defaultOutlineWordControlOptions))
         : undefined,
+      knowledgeSourceMode: normalizeKnowledgeSourceMode(meta.knowledge_source_mode),
       referenceKnowledgeDocumentIds: loadReferenceDocumentIds(),
+      referenceDifyDatasetIds: normalizeKnowledgeSourceIds(safeJsonParse(meta.reference_dify_dataset_ids_json, [])),
       ...tasks,
       globalFacts: loadGlobalFacts(),
       contentGenerationOptions: safeJsonParse(meta.content_generation_options_json, undefined),
@@ -1905,12 +1919,14 @@ function createTechnicalPlanStore({ app, db, fileService, agentService, taskLogS
     }
   }
 
-  function saveOutlineConfig({ referenceKnowledgeDocumentIds, outlineMode, outlineExpansionMode, wordControlOptions } = {}) {
+  function saveOutlineConfig({ knowledgeSourceMode, referenceKnowledgeDocumentIds, referenceDifyDatasetIds, outlineMode, outlineExpansionMode, wordControlOptions } = {}) {
     updateTechnicalPlan({
       outlineMode: isValidOutlineMode(outlineMode) ? outlineMode : 'aligned',
       outlineExpansionMode: isValidOutlineExpansionMode(outlineExpansionMode) ? outlineExpansionMode : 'ai-complement',
       outlineWordControlOptions: normalizeOutlineWordControlOptions(wordControlOptions),
+      knowledgeSourceMode: normalizeKnowledgeSourceMode(knowledgeSourceMode),
       referenceKnowledgeDocumentIds,
+      referenceDifyDatasetIds,
     });
   }
 

@@ -2,6 +2,7 @@ import type { OutlineContentMode, OutlineData, OutlineExpansionMode, OutlineMode
 
 export type TechnicalPlanStep = 'document-analysis' | 'bid-analysis' | 'outline-generation' | 'global-facts' | 'content-edit' | 'expand';
 export type TechnicalPlanWorkflowKind = 'technical-plan' | 'existing-plan-expansion';
+export type KnowledgeSourceMode = 'local' | 'dify';
 export type BidAnalysisMode = 'key' | 'full' | 'custom';
 export type BidAnalysisTaskStatus = 'idle' | 'running' | 'success' | 'error';
 export type BidSectionMode = 'single' | 'multiple';
@@ -360,7 +361,9 @@ export interface TechnicalPlanState {
   outlineExpansionMode: OutlineExpansionMode;
   outlineWordControlOptions: OutlineWordControlOptions;
   outlineWordControlSnapshot?: OutlineWordControlOptions;
+  knowledgeSourceMode: KnowledgeSourceMode;
   referenceKnowledgeDocumentIds: string[];
+  referenceDifyDatasetIds: string[];
   bidSectionExtractionTask?: BackgroundTaskState;
   bidAnalysisTask?: BackgroundTaskState;
   outlineGenerationTask?: BackgroundTaskState;

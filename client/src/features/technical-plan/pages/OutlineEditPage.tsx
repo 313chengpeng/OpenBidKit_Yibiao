@@ -4,8 +4,8 @@ import { useEffect, useRef, useState } from 'react';
 import type { CSSProperties, DragEvent } from 'react';
 import { trackConfigUsage } from '../../../shared/analytics/analytics';
 import { useToast } from '../../../shared/ui';
-import type { BackgroundTaskState, OutlineSelectionItem, SaveOutlineRequest, SaveOutlineSelectionRequest, TechnicalPlanWorkflowKind } from '../types';
-import type { KnowledgeBaseIndex, KnowledgeDocument } from '../../knowledge-base/types';
+import type { BackgroundTaskState, KnowledgeSourceMode, OutlineSelectionItem, SaveOutlineRequest, SaveOutlineSelectionRequest, TechnicalPlanWorkflowKind } from '../types';
+import type { DifyKnowledgeDataset, KnowledgeBaseIndex, KnowledgeDocument } from '../../knowledge-base/types';
 import { OUTLINE_CONTENT_MODE_LABELS } from '../../../shared/types';
 import type { OutlineContentMode, OutlineData, OutlineExpansionMode, OutlineItem, OutlineMode, OutlineWordControlOptions } from '../../../shared/types';
 import type { ExportFormatConfig } from '../../../shared/types/exportFormat';
@@ -19,11 +19,13 @@ interface OutlineEditPageProps {
   outlineExpansionMode: OutlineExpansionMode;
   outlineWordControlOptions: OutlineWordControlOptions;
   outlineWordControlSnapshot?: OutlineWordControlOptions;
+  knowledgeSourceMode: KnowledgeSourceMode;
   referenceKnowledgeDocumentIds: string[];
+  referenceDifyDatasetIds: string[];
   outlineData: OutlineData | null;
   task?: BackgroundTaskState;
   contentTaskStatus?: BackgroundTaskState['status'];
-  onOutlineConfigChange: (config: { referenceKnowledgeDocumentIds: string[]; outlineMode: OutlineMode; outlineExpansionMode: OutlineExpansionMode; wordControlOptions: OutlineWordControlOptions }) => Promise<void>;
+  onOutlineConfigChange: (config: { knowledgeSourceMode: KnowledgeSourceMode; referenceKnowledgeDocumentIds: string[]; referenceDifyDatasetIds: string[]; outlineMode: OutlineMode; outlineExpansionMode: OutlineExpansionMode; wordControlOptions: OutlineWordControlOptions }) => Promise<void>;
   onOutlineSaved: (request: SaveOutlineRequest) => Promise<void>;
   onOutlineSelectionSaved: (request: SaveOutlineSelectionRequest) => Promise<void>;
   onSortGuardChange?: (guard: OutlineSortGuard | null) => void;
@@ -324,7 +326,9 @@ function OutlineEditPage({
   outlineExpansionMode,
   outlineWordControlOptions,
   outlineWordControlSnapshot,
+  knowledgeSourceMode,
   referenceKnowledgeDocumentIds,
+  referenceDifyDatasetIds,
   outlineData,
   task,
   contentTaskStatus,
@@ -344,7 +348,10 @@ function OutlineEditPage({
   const [progressCollapsed, setProgressCollapsed] = useState(false);
   const [generationDialogOpen, setGenerationDialogOpen] = useState(false);
   const [draftOutlineExpansionMode, setDraftOutlineExpansionMode] = useState<OutlineExpansionMode>(outlineExpansionMode);
+  const [draftKnowledgeSourceMode, setDraftKnowledgeSourceMode] = useState<KnowledgeSourceMode>(knowledgeSourceMode);
   const [draftKnowledgeDocumentIds, setDraftKnowledgeDocumentIds] = useState<string[]>(referenceKnowledgeDocumentIds);
+  const [draftDifyDatasetIds, setDraftDifyDatasetIds] = useState<string[]>(referenceDifyDatasetIds);
+  const [difyDatasets, setDifyDatasets] = useState<DifyKnowledgeDataset[]>([]);
   const [draftMinimumWords, setDraftMinimumWords] = useState(formatWordCountDraft(outlineWordControlOptions.minimumWords));
   const [draftMaximumWords, setDraftMaximumWords] = useState(formatWordCountDraft(outlineWordControlOptions.maximumWords));
   const [draftSectionWords, setDraftSectionWords] = useState(formatWordCountDraft(outlineWordControlOptions.sectionWords));
@@ -354,6 +361,8 @@ function OutlineEditPage({
   const [expandedKnowledgeFolderIds, setExpandedKnowledgeFolderIds] = useState<Set<string>>(new Set());
   const [knowledgeIndex, setKnowledgeIndex] = useState<KnowledgeBaseIndex>(emptyKnowledgeIndex);
   const [loadingKnowledge, setLoadingKnowledge] = useState(false);
+  const [loadingDifyKnowledge, setLoadingDifyKnowledge] = useState(false);
+  const [difyKnowledgeError, setDifyKnowledgeError] = useState('');
   const [localStartAt, setLocalStartAt] = useState<number | null>(null);
   const [nowTick, setNowTick] = useState(() => Date.now());
   const [sorting, setSorting] = useState(false);
@@ -497,11 +506,14 @@ function OutlineEditPage({
     }
 
     setDraftOutlineExpansionMode(isExpansionWorkflow ? outlineExpansionMode : 'ai-complement');
+    setDraftKnowledgeSourceMode(knowledgeSourceMode);
     setDraftKnowledgeDocumentIds(referenceKnowledgeDocumentIds);
+    setDraftDifyDatasetIds(referenceDifyDatasetIds);
     initializeWordControlDraft();
     setKnowledgeSearch('');
     void loadKnowledgeIndex();
-  }, [generationDialogOpen, isExpansionWorkflow, outlineExpansionMode, outlineWordControlOptions, referenceKnowledgeDocumentIds]);
+    void loadDifyDatasets();
+  }, [generationDialogOpen, isExpansionWorkflow, knowledgeSourceMode, outlineExpansionMode, outlineWordControlOptions, referenceDifyDatasetIds, referenceKnowledgeDocumentIds]);
 
   const loadKnowledgeIndex = async () => {
     try {
@@ -515,6 +527,20 @@ function OutlineEditPage({
       setExpandedKnowledgeFolderIds(new Set());
     } finally {
       setLoadingKnowledge(false);
+    }
+  };
+
+  const loadDifyDatasets = async () => {
+    try {
+      setLoadingDifyKnowledge(true);
+      setDifyKnowledgeError('');
+      const result = await window.yibiao?.difyKnowledge.listDatasets();
+      setDifyDatasets(result?.datasets || []);
+    } catch (error) {
+      setDifyDatasets([]);
+      setDifyKnowledgeError(error instanceof Error ? error.message : '读取 Dify 知识库失败');
+    } finally {
+      setLoadingDifyKnowledge(false);
     }
   };
 
@@ -534,7 +560,9 @@ function OutlineEditPage({
     }
 
     setDraftOutlineExpansionMode(isExpansionWorkflow ? outlineExpansionMode : 'ai-complement');
+    setDraftKnowledgeSourceMode(knowledgeSourceMode);
     setDraftKnowledgeDocumentIds(referenceKnowledgeDocumentIds);
+    setDraftDifyDatasetIds(referenceDifyDatasetIds);
     initializeWordControlDraft();
     setKnowledgeSearch('');
     setGenerationDialogOpen(true);
@@ -556,11 +584,17 @@ function OutlineEditPage({
 
   const saveOutlineConfig = async () => {
     try {
+      if (draftKnowledgeSourceMode === 'dify' && !draftDifyDatasetIds.length) {
+        showToast('请至少选择一个 Dify 知识库', 'info');
+        return;
+      }
       const wordControlOptions = getNormalizedWordControlOptions();
       setSavingOutlineConfig(true);
       await onOutlineConfigChange({
+        knowledgeSourceMode: draftKnowledgeSourceMode,
         referenceKnowledgeDocumentIds: draftKnowledgeDocumentIds,
         outlineMode: isExpansionWorkflow ? 'aligned' : 'response-file',
+        referenceDifyDatasetIds: draftDifyDatasetIds,
         outlineExpansionMode: isExpansionWorkflow ? draftOutlineExpansionMode : 'ai-complement',
         wordControlOptions,
       });
@@ -583,6 +617,10 @@ function OutlineEditPage({
       showToast('请先完成招标文件解析', 'info');
       return;
     }
+    if (draftKnowledgeSourceMode === 'dify' && !draftDifyDatasetIds.length) {
+      showToast('请至少选择一个 Dify 知识库', 'info');
+      return;
+    }
 
     try {
       const wordControlOptions = getNormalizedWordControlOptions();
@@ -593,15 +631,19 @@ function OutlineEditPage({
       const nextOutlineMode: OutlineMode = isExpansionWorkflow ? 'aligned' : 'response-file';
       const nextOutlineExpansionMode = isExpansionWorkflow ? draftOutlineExpansionMode : 'ai-complement';
       await onOutlineConfigChange({
+        knowledgeSourceMode: draftKnowledgeSourceMode,
         referenceKnowledgeDocumentIds: draftKnowledgeDocumentIds,
         outlineMode: nextOutlineMode,
+        referenceDifyDatasetIds: draftDifyDatasetIds,
         outlineExpansionMode: nextOutlineExpansionMode,
         wordControlOptions,
       });
       setGenerationDialogOpen(false);
       await window.yibiao?.tasks.startOutlineGeneration({
+        knowledge_source_mode: draftKnowledgeSourceMode,
         reference_knowledge_document_ids: draftKnowledgeDocumentIds,
         outline_mode: nextOutlineMode,
+        reference_dify_dataset_ids: draftDifyDatasetIds,
         outline_expansion_mode: nextOutlineExpansionMode,
         word_control_options: wordControlOptions,
       });
@@ -685,6 +727,18 @@ function OutlineEditPage({
       return;
     }
     setDraftKnowledgeDocumentIds([]);
+  };
+
+  const toggleDraftDifyDataset = (datasetId: string) => {
+    if (knowledgePickingDisabled) return;
+    setDraftDifyDatasetIds((prev) => (
+      prev.includes(datasetId) ? prev.filter((id) => id !== datasetId) : [...prev, datasetId]
+    ));
+  };
+
+  const clearDraftDifyDatasets = () => {
+    if (knowledgePickingDisabled) return;
+    setDraftDifyDatasetIds([]);
   };
 
   const getMutationLockMessage = () => {
@@ -1066,7 +1120,7 @@ function OutlineEditPage({
     );
   };
 
-  const renderKnowledgePicker = () => {
+  const renderLocalKnowledgePicker = () => {
     if (loadingKnowledge) {
       return <div className="outline-knowledge-empty">正在读取知识库...</div>;
     }
@@ -1175,13 +1229,88 @@ function OutlineEditPage({
     );
   };
 
+  const renderDifyKnowledgePicker = () => {
+    if (loadingDifyKnowledge) {
+      return <div className="outline-knowledge-empty">正在读取 Dify 知识库...</div>;
+    }
+    if (difyKnowledgeError) {
+      return (
+        <div className="outline-knowledge-empty outline-dify-error">
+          <span>{difyKnowledgeError}</span>
+          <button type="button" className="secondary-action" onClick={() => { void loadDifyDatasets(); }}>重新连接</button>
+        </div>
+      );
+    }
+    if (!difyDatasets.length) {
+      return <div className="outline-knowledge-empty">Dify 中暂无允许 API 访问的知识库。</div>;
+    }
+    const keyword = knowledgeSearch.trim().toLowerCase();
+    const visibleDatasets = keyword
+      ? difyDatasets.filter((dataset) => includesKeyword(dataset.name, keyword) || includesKeyword(dataset.description, keyword))
+      : difyDatasets;
+    const selectedDatasets = draftDifyDatasetIds
+      .map((datasetId) => difyDatasets.find((dataset) => dataset.id === datasetId))
+      .filter((dataset): dataset is DifyKnowledgeDataset => Boolean(dataset));
+    return (
+      <div className="outline-knowledge-compact">
+        <div className="outline-knowledge-search-row">
+          <input
+            className="outline-knowledge-search"
+            value={knowledgeSearch}
+            onChange={(event) => setKnowledgeSearch(event.target.value)}
+            disabled={knowledgePickingDisabled}
+            placeholder="搜索 Dify 知识库"
+          />
+          <span>{keyword ? `匹配 ${visibleDatasets.length} 个知识库` : `共 ${difyDatasets.length} 个可用知识库`}</span>
+        </div>
+        <div className="outline-knowledge-grid">
+          <div className="outline-knowledge-browser">
+            <div className="outline-knowledge-pane-head"><strong>Dify 知识库</strong><span>只读检索</span></div>
+            <div className="outline-knowledge-document-list compact outline-dify-dataset-list">
+              {visibleDatasets.map((dataset) => {
+                const selected = draftDifyDatasetIds.includes(dataset.id);
+                return (
+                  <label className={`outline-knowledge-document compact${selected ? ' is-selected' : ''}`} key={dataset.id}>
+                    <input type="checkbox" checked={selected} disabled={knowledgePickingDisabled} onChange={() => toggleDraftDifyDataset(dataset.id)} />
+                    <strong title={dataset.description || dataset.name}>{dataset.name}</strong>
+                    <small>{dataset.document_count} 个文档</small>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+          <aside className="outline-knowledge-selected-pane">
+            <div className="outline-knowledge-pane-head"><strong>本次已选</strong><button type="button" onClick={clearDraftDifyDatasets} disabled={knowledgePickingDisabled || !draftDifyDatasetIds.length}>清空</button></div>
+            {selectedDatasets.length ? <div className="outline-knowledge-selected-list">{selectedDatasets.map((dataset) => (
+              <div className="outline-knowledge-selected-item" key={dataset.id}><strong title={dataset.name}>{dataset.name}</strong><button type="button" onClick={() => toggleDraftDifyDataset(dataset.id)} disabled={knowledgePickingDisabled}>移除</button></div>
+            ))}</div> : <div className="outline-knowledge-empty compact">未选择 Dify 知识库</div>}
+          </aside>
+        </div>
+      </div>
+    );
+  };
+
+  const renderKnowledgePicker = () => (
+    <div className="outline-knowledge-source-body">
+      <div className="outline-knowledge-source-switch" role="group" aria-label="知识库来源">
+        <button type="button" className={draftKnowledgeSourceMode === 'local' ? 'is-selected' : ''} onClick={() => setDraftKnowledgeSourceMode('local')} disabled={knowledgePickingDisabled}>本地知识库</button>
+        <button type="button" className={draftKnowledgeSourceMode === 'dify' ? 'is-selected' : ''} onClick={() => setDraftKnowledgeSourceMode('dify')} disabled={knowledgePickingDisabled}>Dify 知识库</button>
+      </div>
+      {draftKnowledgeSourceMode === 'dify' ? renderDifyKnowledgePicker() : renderLocalKnowledgePicker()}
+    </div>
+  );
+
+  const currentKnowledgeSummary = knowledgeSourceMode === 'dify'
+    ? `Dify 知识库${referenceDifyDatasetIds.length ? `，已选择 ${referenceDifyDatasetIds.length} 个` : '，未选择'}`
+    : `本地知识库${referenceKnowledgeDocumentIds.length ? `，已选择 ${referenceKnowledgeDocumentIds.length} 个文档` : '，未选择'}`;
+
   return (
     <div className="plan-step-body outline-generation-page">
       <section className="outline-command-bar">
         <div>
           <span className="section-kicker">STEP 03</span>
           <strong>目录生成</strong>
-          <p>{isExpansionWorkflow ? `当前原方案目录使用方式：${outlineExpansionModeLabels[outlineExpansionMode]}；参考知识库：${referenceKnowledgeDocumentIds.length ? `已选择 ${referenceKnowledgeDocumentIds.length} 个文档` : '未选择'}。` : `一级目录依据响应文件要求生成；参考知识库：${referenceKnowledgeDocumentIds.length ? `已选择 ${referenceKnowledgeDocumentIds.length} 个文档` : '未选择'}。`}</p>
+          <p>{isExpansionWorkflow ? `当前原方案目录使用方式：${outlineExpansionModeLabels[outlineExpansionMode]}；参考知识库：${currentKnowledgeSummary}。` : `生成前选择参考知识库；当前参考知识库：${currentKnowledgeSummary}。`}</p>
         </div>
         <div className="outline-command-actions">
           {awaitingOutlineSelection && (
@@ -1457,7 +1586,7 @@ function OutlineEditPage({
               <section className="outline-generation-config-section outline-knowledge-picker">
                 <div className="outline-generation-config-head">
                   <strong>参考知识库</strong>
-                  <span>已选择 {draftKnowledgeDocumentIds.length} 个文档</span>
+                  <span>{draftKnowledgeSourceMode === 'dify' ? `已选择 ${draftDifyDatasetIds.length} 个 Dify 知识库` : `已选择 ${draftKnowledgeDocumentIds.length} 个本地文档`}</span>
                 </div>
                 {renderKnowledgePicker()}
               </section>

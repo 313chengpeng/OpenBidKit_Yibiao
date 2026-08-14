@@ -1,3 +1,22 @@
+export interface DifyKnowledgeDataset {
+  id: string;
+  name: string;
+  description: string;
+  document_count: number;
+  word_count: number;
+  enable_api: boolean;
+}
+
+export interface DifyKnowledgeStatus {
+  configured: boolean;
+  apiBaseUrl: string;
+}
+
+export interface DifyKnowledgeListResult {
+  configured: boolean;
+  datasets: DifyKnowledgeDataset[];
+}
+
 export interface KnowledgeItem {
   id: string;
   title: string;

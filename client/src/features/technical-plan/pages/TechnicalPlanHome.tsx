@@ -95,7 +95,9 @@ const resetState = {
   outlineExpansionMode: 'ai-complement' as const,
   outlineWordControlOptions: { ...DEFAULT_OUTLINE_WORD_CONTROL_OPTIONS },
   outlineWordControlSnapshot: undefined,
+  knowledgeSourceMode: 'local' as const,
   referenceKnowledgeDocumentIds: [] as string[],
+  referenceDifyDatasetIds: [] as string[],
   bidSectionExtractionTask: undefined,
   bidAnalysisTask: undefined,
   outlineGenerationTask: undefined,
@@ -684,7 +686,9 @@ function TechnicalPlanHome({ workflowKind, registerLeaveGuard, onSectionChange }
             outlineData: hasOwnField(technicalPlan, 'outlineData') ? (technicalPlan.outlineData || null) : prev.outlineData,
             outlineWordControlSnapshot: hasOwnField(technicalPlan, 'outlineWordControlSnapshot') ? technicalPlan.outlineWordControlSnapshot : prev.outlineWordControlSnapshot,
             outlineGenerationTask: hasOwnField(technicalPlan, 'outlineGenerationTask') ? trimTaskLogs(technicalPlan.outlineGenerationTask) : prev.outlineGenerationTask,
+            knowledgeSourceMode: technicalPlan.knowledgeSourceMode === 'dify' ? 'dify' : 'local',
             referenceKnowledgeDocumentIds: Array.isArray(technicalPlan.referenceKnowledgeDocumentIds) ? technicalPlan.referenceKnowledgeDocumentIds : prev.referenceKnowledgeDocumentIds,
+            referenceDifyDatasetIds: Array.isArray(technicalPlan.referenceDifyDatasetIds) ? technicalPlan.referenceDifyDatasetIds : prev.referenceDifyDatasetIds,
             globalFactsTask: hasOwnField(technicalPlan, 'globalFactsTask') ? trimTaskLogs(technicalPlan.globalFactsTask) : prev.globalFactsTask,
             globalFacts: hasOwnField(technicalPlan, 'globalFacts') ? (technicalPlan.globalFacts || []) : prev.globalFacts,
             contentGenerationTask: hasOwnField(technicalPlan, 'contentGenerationTask') ? trimTaskLogs(technicalPlan.contentGenerationTask) : prev.contentGenerationTask,
@@ -739,9 +743,13 @@ function TechnicalPlanHome({ workflowKind, registerLeaveGuard, onSectionChange }
             outlineExpansionMode: technicalPlan.outlineExpansionMode ?? prev.outlineExpansionMode,
             outlineWordControlOptions: technicalPlan.outlineWordControlOptions ?? prev.outlineWordControlOptions,
             outlineWordControlSnapshot: hasOwnField(technicalPlan, 'outlineWordControlSnapshot') ? technicalPlan.outlineWordControlSnapshot : prev.outlineWordControlSnapshot,
+            knowledgeSourceMode: technicalPlan.knowledgeSourceMode === 'dify' ? 'dify' : 'local',
             referenceKnowledgeDocumentIds: Array.isArray(technicalPlan.referenceKnowledgeDocumentIds)
               ? technicalPlan.referenceKnowledgeDocumentIds
               : prev.referenceKnowledgeDocumentIds,
+            referenceDifyDatasetIds: Array.isArray(technicalPlan.referenceDifyDatasetIds)
+              ? technicalPlan.referenceDifyDatasetIds
+              : prev.referenceDifyDatasetIds,
             outlineData: nextOutlineData,
             globalFactsTask: hasOwnField(technicalPlan, 'globalFactsTask') ? trimTaskLogs(technicalPlan.globalFactsTask) : prev.globalFactsTask,
             globalFacts: hasOwnField(technicalPlan, 'globalFacts') ? (technicalPlan.globalFacts || []) : prev.globalFacts,
@@ -786,9 +794,13 @@ function TechnicalPlanHome({ workflowKind, registerLeaveGuard, onSectionChange }
             contentGenerationTask: latestTask || trimTaskLogs(technicalPlan.contentGenerationTask),
             outlineWordControlSnapshot: hasOwnField(technicalPlan, 'outlineWordControlSnapshot') ? technicalPlan.outlineWordControlSnapshot : prev.outlineWordControlSnapshot,
             outlineMode: technicalPlan.outlineMode ?? prev.outlineMode,
+            knowledgeSourceMode: technicalPlan.knowledgeSourceMode === 'dify' ? 'dify' : 'local',
             referenceKnowledgeDocumentIds: Array.isArray(technicalPlan.referenceKnowledgeDocumentIds)
               ? technicalPlan.referenceKnowledgeDocumentIds
               : prev.referenceKnowledgeDocumentIds,
+            referenceDifyDatasetIds: Array.isArray(technicalPlan.referenceDifyDatasetIds)
+              ? technicalPlan.referenceDifyDatasetIds
+              : prev.referenceDifyDatasetIds,
             contentGenerationSections: nextSections,
             contentGenerationPlans: hasOwnField(technicalPlan, 'contentGenerationPlans') ? (technicalPlan.contentGenerationPlans || {}) : prev.contentGenerationPlans,
             contentIllustrationPlan: hasOwnField(technicalPlan, 'contentIllustrationPlan') ? technicalPlan.contentIllustrationPlan : prev.contentIllustrationPlan,
@@ -1063,8 +1075,10 @@ function TechnicalPlanHome({ workflowKind, registerLeaveGuard, onSectionChange }
   };
 
   const saveOutlineConfig = async (config: {
+    knowledgeSourceMode: TechnicalPlanState['knowledgeSourceMode'];
     referenceKnowledgeDocumentIds: string[];
     outlineMode: TechnicalPlanState['outlineMode'];
+    referenceDifyDatasetIds: string[];
     outlineExpansionMode: TechnicalPlanState['outlineExpansionMode'];
     wordControlOptions: OutlineWordControlOptions;
   }) => {
@@ -1074,7 +1088,9 @@ function TechnicalPlanHome({ workflowKind, registerLeaveGuard, onSectionChange }
       outlineMode: config.outlineMode,
       outlineExpansionMode: config.outlineExpansionMode,
       outlineWordControlOptions: config.wordControlOptions,
+      knowledgeSourceMode: config.knowledgeSourceMode,
       referenceKnowledgeDocumentIds: config.referenceKnowledgeDocumentIds,
+      referenceDifyDatasetIds: config.referenceDifyDatasetIds,
     }));
   };
 
@@ -1197,7 +1213,9 @@ function TechnicalPlanHome({ workflowKind, registerLeaveGuard, onSectionChange }
             outlineExpansionMode={state.outlineExpansionMode || 'ai-complement'}
           outlineWordControlOptions={state.outlineWordControlOptions}
           outlineWordControlSnapshot={state.outlineWordControlSnapshot}
+          knowledgeSourceMode={state.knowledgeSourceMode}
           referenceKnowledgeDocumentIds={state.referenceKnowledgeDocumentIds}
+          referenceDifyDatasetIds={state.referenceDifyDatasetIds}
           outlineData={state.outlineData}
           task={state.outlineGenerationTask}
           contentTaskStatus={state.contentGenerationTask?.status}
