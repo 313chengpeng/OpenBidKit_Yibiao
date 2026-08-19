@@ -25,6 +25,11 @@ client/release/
 # 智能体命令工具下载临时目录
 client/.tmp-agent-tools-download/
 
+# Open XML 助手构建产物与自包含发布包
+openxmlhelper/**/bin/
+openxmlhelper/**/obj/
+client/vendor/openxml-tools/
+
 # 临时和缓存文件
 *.tmp
 *.temp
