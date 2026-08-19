@@ -240,6 +240,11 @@ const defaultExportFormat = {
     caption_bold: false,
     caption_italic: false,
   },
+  text_normalization: {
+    chinese_quotes: false,
+    strip_spaces: false,
+  },
+  include_table_of_contents: false,
 };
 
 const defaultConfig = {
@@ -547,6 +552,8 @@ function cloneDefaultExportFormat(def = defaultExportFormat) {
       body_cell: { ...def.table.body_cell },
     },
     image: { ...def.image },
+    text_normalization: { ...def.text_normalization },
+    include_table_of_contents: def.include_table_of_contents,
   };
 }
 
@@ -661,6 +668,7 @@ function normalizeExportFormat(source) {
   };
 
   const image = normalizeImageStyle(source.image, def.image);
+  const srcNormalization = source.text_normalization && typeof source.text_normalization === 'object' ? source.text_normalization : {};
 
   return {
     template_name: typeof source.template_name === 'string' && source.template_name ? source.template_name : def.template_name,
@@ -671,6 +679,11 @@ function normalizeExportFormat(source) {
     body_text,
     table,
     image,
+    text_normalization: {
+      chinese_quotes: typeof srcNormalization.chinese_quotes === 'boolean' ? srcNormalization.chinese_quotes : def.text_normalization.chinese_quotes,
+      strip_spaces: typeof srcNormalization.strip_spaces === 'boolean' ? srcNormalization.strip_spaces : def.text_normalization.strip_spaces,
+    },
+    include_table_of_contents: typeof source.include_table_of_contents === 'boolean' ? source.include_table_of_contents : def.include_table_of_contents,
   };
 }
 

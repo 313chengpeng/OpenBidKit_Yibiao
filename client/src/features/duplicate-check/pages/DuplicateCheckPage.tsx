@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { trackPageView } from '../../../shared/analytics/analytics';
-import { FloatingToolbar, isLibreOfficeRequiredMessage, ProgressBar, ToolbarArrowLeftIcon, ToolbarArrowRightIcon, UploadBoard, UploadEmpty, UploadFilePill, UploadRow, useDocumentParseNotice, useToast } from '../../../shared/ui';
+import { AppDialog, FloatingToolbar, isLibreOfficeRequiredMessage, ProgressBar, ToolbarArrowLeftIcon, ToolbarArrowRightIcon, UploadBoard, UploadEmpty, UploadFilePill, UploadRow, useDocumentParseNotice, useToast } from '../../../shared/ui';
 import type { FloatingToolbarGroup } from '../../../shared/ui';
 import type { DuplicateAnalysisStatus, DuplicateAnalysisTabId, DuplicateCheckStep, DuplicateCheckTaskState, DuplicateCheckWorkspaceState, DuplicateContentAnalysisState, DuplicateImageAnalysisState, DuplicateMetadataAnalysisState, DuplicateOutlineAnalysisState, LocalFileSelection } from '../../../shared/types';
 
@@ -605,6 +605,8 @@ function DuplicateCheckPage() {
   const [imageAnalysis, setImageAnalysis] = useState<DuplicateImageAnalysisState | undefined>();
   const [analysisTask, setAnalysisTask] = useState<DuplicateCheckTaskState | undefined>();
   const [startingAnalysis, setStartingAnalysis] = useState(false);
+  const [exportingExcel, setExportingExcel] = useState(false);
+  const [exportedExcelPath, setExportedExcelPath] = useState('');
   const [busy, setBusy] = useState<'tender' | 'bid' | null>(null);
   const [analyticsReady, setAnalyticsReady] = useState(false);
   const startedMetadataSignatureRef = useRef<string | null>(null);
@@ -919,7 +921,50 @@ function DuplicateCheckPage() {
     switchStep(nextStep);
   };
 
+  const canExportExcel = Boolean(
+    metadataAnalysis?.status === 'success'
+    || outlineAnalysis?.status === 'success'
+    || contentAnalysis?.status === 'success'
+    || imageAnalysis?.status === 'success'
+    || metadataAnalysis?.rows?.length
+    || outlineAnalysis?.duplicateGroups?.length
+    || contentAnalysis?.duplicateSentences?.length
+    || imageAnalysis?.duplicateImages?.length,
+  );
+
+  const exportExcel = async () => {
+    if (exportingExcel) return;
+    if (!canExportExcel) {
+      showToast('当前没有可导出的查重结果', 'info');
+      return;
+    }
+    setExportingExcel(true);
+    try {
+      const result = await window.yibiao?.duplicateCheck.exportExcel();
+      if (!result || result.canceled) return;
+      showToast(result.message || 'Excel 已导出', 'success');
+      if (result.path) setExportedExcelPath(result.path);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : '导出 Excel 失败', 'error');
+    } finally {
+      setExportingExcel(false);
+    }
+  };
+
   const toolbarGroups: FloatingToolbarGroup[] = [
+    {
+      id: 'duplicate-check-export',
+      actions: step === 'analysis' ? [
+        {
+          id: 'export-excel',
+          label: exportingExcel ? '导出中...' : '导出 Excel',
+          variant: 'secondary',
+          disabled: exportingExcel || isAnalysisRunning || !canExportExcel,
+          tooltip: !canExportExcel ? '请先完成查重分析' : '导出元数据、目录、正文和图片查重结果',
+          onClick: () => { void exportExcel(); },
+        },
+      ] : [],
+    },
     {
       id: 'duplicate-check-reset',
       actions: [
@@ -1079,6 +1124,29 @@ function DuplicateCheckPage() {
       )}
 
       <FloatingToolbar groups={toolbarGroups} label="标书查重工具条" />
+      <AppDialog
+        open={Boolean(exportedExcelPath)}
+        onOpenChange={(open) => { if (!open) setExportedExcelPath(''); }}
+        kicker="导出完成"
+        title="是否打开 Excel"
+        description="查重结果已保存到本地，可直接打开核对。"
+        actions={(
+          <>
+            <button type="button" className="secondary-action" onClick={() => setExportedExcelPath('')}>稍后打开</button>
+            <button
+              type="button"
+              className="primary-action"
+              onClick={() => {
+                const filePath = exportedExcelPath;
+                setExportedExcelPath('');
+                if (filePath) void window.yibiao?.export.openFile(filePath);
+              }}
+            >
+              打开文件
+            </button>
+          </>
+        )}
+      />
     </div>
   );
 }

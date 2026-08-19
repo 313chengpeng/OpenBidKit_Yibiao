@@ -82,6 +82,11 @@ export interface ImageStyleConfig {
   caption_italic: boolean;
 }
 
+export interface TextNormalizationConfig {
+  chinese_quotes: boolean;
+  strip_spaces: boolean;
+}
+
 // ── 纸张类型 ──────────────────────────────────────
 export const PAPER_SIZES = [
   { value: 'a4', label: 'A4', detail: '210×297mm 国际标准公文纸' },
@@ -145,6 +150,8 @@ export interface ExportFormatConfig {
   body_text: BodyTextStyleConfig;
   table: TableStyleConfig;
   image: ImageStyleConfig;
+  text_normalization: TextNormalizationConfig;
+  include_table_of_contents: boolean;
 }
 
 export interface ExportTemplateRecord {
@@ -385,6 +392,11 @@ const DEFAULT_IMAGE_STYLE: ImageStyleConfig = {
   caption_italic: false,
 };
 
+const DEFAULT_TEXT_NORMALIZATION: TextNormalizationConfig = {
+  chinese_quotes: false,
+  strip_spaces: false,
+};
+
 export const DEFAULT_HEADING_BORDER_CELL_COLORS = ['#eef5ff', '#f3f7ff', '#f8fbff', '#fbfdff', '#ffffff', '#ffffff'] as const;
 
 const DEFAULT_HEADING_BORDER: HeadingBorderConfig = {
@@ -416,6 +428,8 @@ export const DEFAULT_EXPORT_FORMAT: ExportFormatConfig = {
     { font: '宋体', size: '小四', alignment: '两端对齐', bold: false, text_color: '#243048', spacing_before_pt: 0, spacing_after_pt: 0, first_line_indent_chars: 0, line_spacing: 1, numbering_format: 'custom', numbering_template: '{tail}' },
   ],
   body_text: { ...DEFAULT_BODY_TEXT },
+  text_normalization: { ...DEFAULT_TEXT_NORMALIZATION },
+  include_table_of_contents: false,
   table: {
     border_width: DEFAULT_TABLE_STYLE.border_width,
     border_color: DEFAULT_TABLE_STYLE.border_color,

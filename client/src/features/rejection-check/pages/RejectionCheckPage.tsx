@@ -1,9 +1,12 @@
 import * as Dialog from '@radix-ui/react-dialog';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { trackPageView } from '../../../shared/analytics/analytics';
-import { AppSwitch, FloatingToolbar, isLibreOfficeRequiredMessage, MarkdownEditor, MarkdownFullscreenViewer, MarkdownRenderer, ProgressBar, ToolbarArrowLeftIcon, ToolbarArrowRightIcon, UploadBoard, UploadEmpty, UploadFilePill, UploadRow, useDocumentParseNotice, useToast } from '../../../shared/ui';
+import { AppDialog, AppSwitch, FloatingToolbar, isLibreOfficeRequiredMessage, MarkdownEditor, MarkdownFullscreenViewer, MarkdownRenderer, ProgressBar, ToolbarArrowLeftIcon, ToolbarArrowRightIcon, UploadBoard, UploadEmpty, UploadFilePill, UploadRow, useDocumentParseNotice, useToast } from '../../../shared/ui';
 import type { FloatingToolbarGroup } from '../../../shared/ui';
 import type {
+  IdentityCheckCategory,
+  IdentityCheckFinding,
+  IdentityCheckResultState,
   LogicCheckFinding,
   LogicCheckResultState,
   RejectionBackgroundTaskState,
@@ -36,18 +39,44 @@ const stepLabels: Record<RejectionCheckStep, string> = {
 const resultTabs: Array<{ id: RejectionResultTab; label: string }> = [
   { id: 'analysis', label: '解析结果' },
   { id: 'custom', label: '自定义检查项' },
+  { id: 'identity', label: '暗标补充词' },
 ];
 
 const checkResultTabs: Array<{ id: RejectionCheckResultTab; label: string; description: string }> = [
   { id: 'rejection', label: '废标项检查', description: '根据无效与废标项检查投标文件响应风险' },
   { id: 'typo', label: '错别字检查', description: '检查投标文件中的错别字和明显文字错误' },
   { id: 'logic', label: '逻辑谬误检查', description: '检查前后矛盾、逻辑不一致和表达漏洞' },
+  { id: 'identity', label: '暗标', description: '检查投标文件中可能暴露身份的暗标风险' },
 ];
 
 const defaultCheckOptions: RejectionCheckOptions = {
   rejectionCheck: true,
   typoCheck: true,
   logicCheck: true,
+  identityCheck: true,
+};
+
+const identityBuiltinChecklist = [
+  '人名或简称',
+  '单位 / 企业 / 公司名称',
+  '非本项目的工程名、项目名、项目编号、标段号',
+  '历史项目或业绩举例',
+  '联系方式',
+  '非完整句子的特殊符号',
+  '地区名称',
+  '英文标点、英文字母、英文单位',
+  '用户补充词',
+];
+
+const identityCategoryLabels: Record<IdentityCheckCategory, string> = {
+  person: '人名或简称',
+  org: '单位名称',
+  project: '项目或编号',
+  contact: '联系方式',
+  region: '地区名称',
+  english: '英文或单位',
+  punctuation: '英文标点或符号',
+  custom: '补充词',
 };
 
 const documentLabels: Record<RejectionDocumentRole, string> = {
@@ -108,6 +137,10 @@ function createEmptyLogicCheckResultState(): LogicCheckResultState {
   return { status: 'idle', findings: [] };
 }
 
+function createEmptyIdentityCheckResultState(): IdentityCheckResultState {
+  return { status: 'idle', findings: [] };
+}
+
 function normalizeBackgroundTaskState(state?: Partial<RejectionBackgroundTaskState> | null): RejectionBackgroundTaskState | undefined {
   if (!state || typeof state !== 'object') return undefined;
   const type = state.type === 'rejection-items-extraction' || state.type === 'rejection-check-run' ? state.type : undefined;
@@ -131,13 +164,15 @@ function normalizeCheckOptions(options?: Partial<RejectionCheckOptions> | null):
     rejectionCheck: true,
     typoCheck: options?.typoCheck !== false,
     logicCheck: options?.logicCheck !== false,
+    identityCheck: options?.identityCheck !== false,
   };
 }
 
 function isCheckResultTabEnabled(tabId: RejectionCheckResultTab, options: RejectionCheckOptions) {
   if (tabId === 'rejection') return options.rejectionCheck;
   if (tabId === 'typo') return options.typoCheck;
-  return options.logicCheck;
+  if (tabId === 'logic') return options.logicCheck;
+  return options.identityCheck;
 }
 
 function getCheckResultTabProgress(status: RejectionCheckTabStatus, progressMessage?: string) {
@@ -278,6 +313,59 @@ function normalizeLogicCheckResultState(state?: Partial<LogicCheckResultState> |
     findings,
     activeFindingId,
   };
+}
+
+function normalizeIdentityFindingState(item: Partial<IdentityCheckFinding> | null | undefined, index: number): IdentityCheckFinding | null {
+  if (!item) return null;
+  const matchedText = typeof item.matchedText === 'string' ? item.matchedText.trim() : '';
+  const riskReason = typeof item.riskReason === 'string' ? item.riskReason.trim() : '';
+  if (!matchedText || !riskReason) return null;
+  const category = (['person', 'org', 'project', 'contact', 'region', 'english', 'punctuation', 'custom'] as IdentityCheckCategory[])
+    .includes(item.category as IdentityCheckCategory)
+    ? item.category as IdentityCheckCategory
+    : 'custom';
+
+  return {
+    id: typeof item.id === 'string' && item.id.trim() ? item.id.trim() : `identity-finding-${index + 1}`,
+    bidDocumentId: typeof item.bidDocumentId === 'string' && item.bidDocumentId.trim() ? item.bidDocumentId.trim() : '',
+    category,
+    matchedText,
+    originalExcerpt: typeof item.originalExcerpt === 'string' && item.originalExcerpt.trim() ? item.originalExcerpt.trim() : matchedText,
+    locationHint: typeof item.locationHint === 'string' && item.locationHint.trim() ? item.locationHint.trim() : '未明确具体位置，请结合原文摘录复核。',
+    riskReason,
+    suggestion: typeof item.suggestion === 'string' && item.suggestion.trim() ? item.suggestion.trim() : '请删除或改写为不暴露投标人身份的表述。',
+  };
+}
+
+function normalizeIdentityCheckResultState(state?: Partial<IdentityCheckResultState> | null): IdentityCheckResultState {
+  if (!state) {
+    return createEmptyIdentityCheckResultState();
+  }
+
+  const findings = Array.isArray(state.findings)
+    ? state.findings.map((item, index) => normalizeIdentityFindingState(item, index)).filter((item): item is IdentityCheckFinding => Boolean(item))
+    : [];
+  const status = ['idle', 'running', 'success', 'error'].includes(state.status || '') ? state.status : 'idle';
+  const activeFindingId = findings.some((item) => item.id === state.activeFindingId) ? state.activeFindingId : undefined;
+
+  return {
+    ...state,
+    status: status as RejectionCheckRunStatus,
+    findings,
+    activeFindingId,
+  };
+}
+
+function createIdentityCheckInputSignature(bidDocuments: RejectionDocumentContent[], identityExtraKeywords: string) {
+  const bidSignature = bidDocuments.map(createDocumentSignature).filter(Boolean).join('\n---yibiao-rejection-bid-document---\n');
+  if (!bidSignature) return '';
+  const extra = identityExtraKeywords.trim();
+  return [
+    bidSignature,
+    extra.length,
+    extra.slice(0, 800),
+    extra.slice(-800),
+  ].join('\n---yibiao-identity-check-input---\n');
 }
 
 function formatCharacterCount(length: number) {
@@ -557,6 +645,42 @@ function LogicFindingItem({ finding, bidLabel, expanded, onToggle, onDelete }: {
   );
 }
 
+function IdentityFindingItem({ finding, bidLabel, expanded, onToggle, onDelete }: { finding: IdentityCheckFinding; bidLabel: string; expanded: boolean; onToggle: () => void; onDelete: () => void }) {
+  return (
+    <article className={`rejection-finding-item is-identity is-${finding.category}${expanded ? ' is-expanded' : ''}`}>
+      <div className="rejection-finding-row">
+        <button
+          type="button"
+          className="rejection-finding-toggle"
+          onClick={onToggle}
+          aria-expanded={expanded}
+        >
+          <span className="rejection-finding-chevron" aria-hidden="true">{expanded ? '-' : '+'}</span>
+          <span className="rejection-finding-title-wrap">
+            <span>
+              <strong>{finding.matchedText}</strong>
+              <em className="rejection-finding-file-tag">{bidLabel}</em>
+              <em className="rejection-finding-tag is-identity">{identityCategoryLabels[finding.category]}</em>
+            </span>
+            <small>{finding.locationHint}</small>
+          </span>
+        </button>
+        <button type="button" className="rejection-finding-delete" onClick={onDelete} aria-label={`删除${finding.matchedText}`}>
+          删除
+        </button>
+      </div>
+
+      {expanded && (
+        <div className="rejection-finding-detail">
+          <FindingDetailBlock label="原文摘录" content={finding.originalExcerpt} />
+          <FindingDetailBlock label="风险原因" content={finding.riskReason} />
+          <FindingDetailBlock label="修改建议" content={finding.suggestion} />
+        </div>
+      )}
+    </article>
+  );
+}
+
 function RejectionCheckPage() {
   const [step, setStep] = useState<RejectionCheckStep>('documents');
   const [tenderDocument, setTenderDocument] = useState<RejectionDocumentContent | null>(null);
@@ -570,14 +694,20 @@ function RejectionCheckPage() {
   const [rejectionCheckResult, setRejectionCheckResult] = useState<RejectionCheckResultState>(() => createEmptyRejectionCheckResultState());
   const [typoCheckResult, setTypoCheckResult] = useState<TypoCheckResultState>(() => createEmptyTypoCheckResultState());
   const [logicCheckResult, setLogicCheckResult] = useState<LogicCheckResultState>(() => createEmptyLogicCheckResultState());
+  const [identityCheckResult, setIdentityCheckResult] = useState<IdentityCheckResultState>(() => createEmptyIdentityCheckResultState());
   const [extractionTask, setExtractionTask] = useState<RejectionBackgroundTaskState | undefined>();
   const [checkTask, setCheckTask] = useState<RejectionBackgroundTaskState | undefined>();
   const [customCheckItems, setCustomCheckItems] = useState('');
   const [customCheckItemsDraft, setCustomCheckItemsDraft] = useState('');
   const [customCheckItemsSaving, setCustomCheckItemsSaving] = useState(false);
+  const [identityExtraKeywords, setIdentityExtraKeywords] = useState('');
+  const [identityExtraKeywordsDraft, setIdentityExtraKeywordsDraft] = useState('');
+  const [identityExtraKeywordsSaving, setIdentityExtraKeywordsSaving] = useState(false);
   const [checkOptions, setCheckOptions] = useState<RejectionCheckOptions>(defaultCheckOptions);
   const [draftCheckOptions, setDraftCheckOptions] = useState<RejectionCheckOptions>(defaultCheckOptions);
   const [checkConfigDialogOpen, setCheckConfigDialogOpen] = useState(false);
+  const [exportingExcel, setExportingExcel] = useState(false);
+  const [exportedExcelPath, setExportedExcelPath] = useState('');
   const [busy, setBusy] = useState<'technical-plan' | 'tender-upload' | 'bid-upload' | 'remove' | null>(null);
   const [analyticsReady, setAnalyticsReady] = useState(false);
   const hydratedRef = useRef(false);
@@ -586,6 +716,9 @@ function RejectionCheckPage() {
   const customCheckItemsRef = useRef('');
   const customCheckItemsDraftRef = useRef('');
   const customCheckItemsSaveVersionRef = useRef(0);
+  const identityExtraKeywordsRef = useRef('');
+  const identityExtraKeywordsDraftRef = useRef('');
+  const identityExtraKeywordsSaveVersionRef = useRef(0);
   const { showToast } = useToast();
   const { showDocumentParseNotice } = useDocumentParseNotice();
 
@@ -596,7 +729,8 @@ function RejectionCheckPage() {
   const bidSignature = useMemo(() => createBidDocumentsSignature(bidDocuments), [bidDocuments]);
   const hasAnyDocument = Boolean(tenderDocument || bidDocuments.length);
   const checkOptionsChanged = checkOptions.typoCheck !== defaultCheckOptions.typoCheck
-    || checkOptions.logicCheck !== defaultCheckOptions.logicCheck;
+    || checkOptions.logicCheck !== defaultCheckOptions.logicCheck
+    || checkOptions.identityCheck !== defaultCheckOptions.identityCheck;
   const hasAnyWorkspaceData = Boolean(
     hasAnyDocument
     || invalidBidAndRejectionItems.content.trim()
@@ -606,9 +740,12 @@ function RejectionCheckPage() {
     || typoCheckResult.findings.length
     || logicCheckResult.status !== 'idle'
     || logicCheckResult.findings.length
+    || identityCheckResult.status !== 'idle'
+    || identityCheckResult.findings.length
     || extractionTask
     || checkTask
     || customCheckItemsDraft.trim()
+    || identityExtraKeywordsDraft.trim()
     || checkOptionsChanged,
   );
   const canGoNext = Boolean(tenderDocument && bidDocuments.length);
@@ -644,20 +781,33 @@ function RejectionCheckPage() {
     bidSignature
     && logicCheckResult.inputSignature === bidSignature,
   );
+  const currentIdentityCheckInputSignature = useMemo(
+    () => createIdentityCheckInputSignature(bidDocuments, identityExtraKeywords),
+    [bidDocuments, identityExtraKeywords],
+  );
+  const identityCheckMatchesInput = Boolean(
+    currentIdentityCheckInputSignature
+    && identityCheckResult.inputSignature === currentIdentityCheckInputSignature,
+  );
   const visibleRejectionCheckStatus: RejectionCheckRunStatus = rejectionCheckMatchesInput ? rejectionCheckResult.status : 'idle';
   const visibleRejectionFindings = rejectionCheckMatchesInput ? rejectionCheckResult.findings : [];
   const visibleTypoCheckStatus: RejectionCheckRunStatus = typoCheckMatchesInput ? typoCheckResult.status : 'idle';
   const visibleTypoFindings = typoCheckMatchesInput ? typoCheckResult.findings : [];
   const visibleLogicCheckStatus: RejectionCheckRunStatus = logicCheckMatchesInput ? logicCheckResult.status : 'idle';
   const visibleLogicFindings = logicCheckMatchesInput ? logicCheckResult.findings : [];
+  const visibleIdentityCheckStatus: RejectionCheckRunStatus = identityCheckMatchesInput ? identityCheckResult.status : 'idle';
+  const visibleIdentityFindings = identityCheckMatchesInput ? identityCheckResult.findings : [];
   const rejectionCheckRunning = rejectionCheckResult.status === 'running';
   const typoCheckRunning = typoCheckResult.status === 'running';
   const logicCheckRunning = logicCheckResult.status === 'running';
+  const identityCheckRunning = identityCheckResult.status === 'running';
   const backgroundCheckRunning = checkTask?.status === 'running';
-  const checkRunning = rejectionCheckRunning || typoCheckRunning || logicCheckRunning || backgroundCheckRunning;
+  const checkRunning = rejectionCheckRunning || typoCheckRunning || logicCheckRunning || identityCheckRunning || backgroundCheckRunning;
   const documentsLocked = busy !== null || extractionRunning || checkRunning;
   const customCheckItemsDirty = customCheckItemsDraft !== customCheckItems;
   const customCheckItemsDisabled = extractionRunning || checkRunning || customCheckItemsSaving;
+  const identityExtraKeywordsDirty = identityExtraKeywordsDraft !== identityExtraKeywords;
+  const identityExtraKeywordsDisabled = extractionRunning || checkRunning || identityExtraKeywordsSaving;
   const hasStaleRejectionCheckResult = Boolean(
     currentRejectionCheckInputSignature
     && rejectionCheckResult.inputSignature
@@ -675,6 +825,12 @@ function RejectionCheckPage() {
     && logicCheckResult.inputSignature
     && logicCheckResult.inputSignature !== bidSignature
     && (logicCheckResult.findings.length || logicCheckResult.status !== 'idle'),
+  );
+  const hasStaleIdentityCheckResult = Boolean(
+    currentIdentityCheckInputSignature
+    && identityCheckResult.inputSignature
+    && identityCheckResult.inputSignature !== currentIdentityCheckInputSignature
+    && (identityCheckResult.findings.length || identityCheckResult.status !== 'idle'),
   );
 
   useEffect(() => {
@@ -704,6 +860,22 @@ function RejectionCheckPage() {
     setCustomCheckItemsDraft(value);
   }
 
+  function syncIdentityExtraKeywordsFromWorkspace(value: unknown) {
+    const nextValue = typeof value === 'string' ? value : '';
+    const shouldSyncDraft = identityExtraKeywordsDraftRef.current === identityExtraKeywordsRef.current;
+    identityExtraKeywordsRef.current = nextValue;
+    setIdentityExtraKeywords(nextValue);
+    if (shouldSyncDraft) {
+      identityExtraKeywordsDraftRef.current = nextValue;
+      setIdentityExtraKeywordsDraft(nextValue);
+    }
+  }
+
+  function updateIdentityExtraKeywordsDraft(value: string) {
+    identityExtraKeywordsDraftRef.current = value;
+    setIdentityExtraKeywordsDraft(value);
+  }
+
   function applyWorkspaceState(state: RejectionCheckWorkspaceState, options: { syncViewState?: boolean } = {}) {
     const syncViewState = options.syncViewState !== false;
     setTenderDocument(state.tenderDocument || null);
@@ -719,7 +891,7 @@ function RejectionCheckPage() {
         : 'tender';
       setActiveDocumentTab(nextActiveDocumentTab);
       setStep(state.step === 'items' || state.step === 'results' ? state.step : 'documents');
-      setActiveResultTab(state.activeResultTab === 'custom' ? 'custom' : 'analysis');
+      setActiveResultTab(state.activeResultTab === 'custom' || state.activeResultTab === 'identity' ? state.activeResultTab : 'analysis');
       setActiveCheckResultTab(checkResultTabs.some((tab) => tab.id === state.activeCheckResultTab) ? state.activeCheckResultTab as RejectionCheckResultTab : 'rejection');
     }
     setInvalidBidAndRejectionItems(normalizeExtractionState({
@@ -729,9 +901,11 @@ function RejectionCheckPage() {
     setRejectionCheckResult(normalizeRejectionCheckResultState(state.rejectionCheckResult));
     setTypoCheckResult(normalizeTypoCheckResultState(state.typoCheckResult));
     setLogicCheckResult(normalizeLogicCheckResultState(state.logicCheckResult));
+    setIdentityCheckResult(normalizeIdentityCheckResultState(state.identityCheckResult));
     setExtractionTask(normalizeBackgroundTaskState(state.extractionTask));
     setCheckTask(normalizeBackgroundTaskState(state.checkTask));
     syncCustomCheckItemsFromWorkspace(state.customCheckItems);
+    syncIdentityExtraKeywordsFromWorkspace(state.identityExtraKeywords);
     const nextOptions = normalizeCheckOptions(state.checkOptions);
     setCheckOptions(nextOptions);
     setDraftCheckOptions(nextOptions);
@@ -763,9 +937,15 @@ function RejectionCheckPage() {
         ? createEmptyLogicCheckResultState()
         : normalizeLogicCheckResultState({ ...prev, ...patch.logicCheckResult }));
     }
+    if (has('identityCheckResult')) {
+      setIdentityCheckResult((prev) => patch.identityCheckResult === undefined
+        ? createEmptyIdentityCheckResultState()
+        : normalizeIdentityCheckResultState({ ...prev, ...patch.identityCheckResult }));
+    }
     if (has('extractionTask')) setExtractionTask(normalizeBackgroundTaskState(patch.extractionTask));
     if (has('checkTask')) setCheckTask(normalizeBackgroundTaskState(patch.checkTask));
     if (has('customCheckItems')) syncCustomCheckItemsFromWorkspace(patch.customCheckItems);
+    if (has('identityExtraKeywords')) syncIdentityExtraKeywordsFromWorkspace(patch.identityExtraKeywords);
     if (has('checkOptions')) {
       const nextOptions = normalizeCheckOptions(patch.checkOptions);
       setCheckOptions(nextOptions);
@@ -1047,6 +1227,7 @@ function RejectionCheckPage() {
     setRejectionCheckResult(createEmptyRejectionCheckResultState());
     setTypoCheckResult(createEmptyTypoCheckResultState());
     setLogicCheckResult(createEmptyLogicCheckResultState());
+    setIdentityCheckResult(createEmptyIdentityCheckResultState());
     setExtractionTask(undefined);
     setCheckTask(undefined);
     customCheckItemsRef.current = '';
@@ -1054,6 +1235,12 @@ function RejectionCheckPage() {
     setCustomCheckItems('');
     setCustomCheckItemsDraft('');
     setCustomCheckItemsSaving(false);
+    identityExtraKeywordsSaveVersionRef.current += 1;
+    identityExtraKeywordsRef.current = '';
+    identityExtraKeywordsDraftRef.current = '';
+    setIdentityExtraKeywords('');
+    setIdentityExtraKeywordsDraft('');
+    setIdentityExtraKeywordsSaving(false);
     setCheckOptions(defaultCheckOptions);
     setDraftCheckOptions(defaultCheckOptions);
     setCheckConfigDialogOpen(false);
@@ -1130,12 +1317,61 @@ function RejectionCheckPage() {
     return false;
   }
 
+  async function saveIdentityExtraKeywords() {
+    if (!identityExtraKeywordsDirty || identityExtraKeywordsDisabled) {
+      return;
+    }
+
+    const saveUiState = window.yibiao?.rejectionCheck.saveUiState;
+    if (typeof saveUiState !== 'function') {
+      showToast('废标项检查缓存接口尚未加载，请重启应用后重试', 'error');
+      return;
+    }
+
+    const nextKeywords = identityExtraKeywordsDraftRef.current;
+    const saveVersion = ++identityExtraKeywordsSaveVersionRef.current;
+    try {
+      setIdentityExtraKeywordsSaving(true);
+      await saveUiState({ identityExtraKeywords: nextKeywords });
+      if (saveVersion !== identityExtraKeywordsSaveVersionRef.current) {
+        return;
+      }
+      identityExtraKeywordsRef.current = nextKeywords;
+      setIdentityExtraKeywords(nextKeywords);
+      showToast('暗标补充词已保存', 'success');
+    } catch (error) {
+      if (saveVersion !== identityExtraKeywordsSaveVersionRef.current) {
+        return;
+      }
+      showToast(error instanceof Error ? error.message : '保存暗标补充词失败', 'error');
+    } finally {
+      if (saveVersion === identityExtraKeywordsSaveVersionRef.current) {
+        setIdentityExtraKeywordsSaving(false);
+      }
+    }
+  }
+
+  function ensureIdentityExtraKeywordsSaved() {
+    if (!identityExtraKeywordsDirty) {
+      return true;
+    }
+
+    setStep('items');
+    setActiveResultTab('identity');
+    showToast('暗标补充词有未保存修改，请先保存', 'info');
+    return false;
+  }
+
   async function startChecks(options: RejectionCheckOptions = checkOptions, runOptions: RejectionCheckOptions = options) {
     if (checkRunning) {
       return;
     }
 
     if (!ensureCustomCheckItemsSaved()) {
+      return;
+    }
+
+    if (!ensureIdentityExtraKeywordsSaved()) {
       return;
     }
 
@@ -1155,12 +1391,18 @@ function RejectionCheckPage() {
       return;
     }
 
-    if (!runOptions.rejectionCheck && !runOptions.typoCheck && !runOptions.logicCheck) {
+    if (!runOptions.rejectionCheck && !runOptions.typoCheck && !runOptions.logicCheck && !runOptions.identityCheck) {
       showToast('请至少启用一种检查', 'info');
       return;
     }
 
-    const nextActiveCheckResultTab: RejectionCheckResultTab = runOptions.rejectionCheck ? 'rejection' : runOptions.typoCheck ? 'typo' : 'logic';
+    const nextActiveCheckResultTab: RejectionCheckResultTab = runOptions.rejectionCheck
+      ? 'rejection'
+      : runOptions.typoCheck
+        ? 'typo'
+        : runOptions.logicCheck
+          ? 'logic'
+          : 'identity';
     setActiveCheckResultTab(nextActiveCheckResultTab);
     setActiveResultBidDocumentId('all');
     const startedAt = new Date().toISOString();
@@ -1191,6 +1433,15 @@ function RejectionCheckPage() {
           updatedAt: startedAt,
         }
       : logicCheckResult;
+    const nextIdentityCheckResult: IdentityCheckResultState = runOptions.identityCheck
+      ? {
+          status: 'running',
+          findings: [],
+          inputSignature: currentIdentityCheckInputSignature,
+          progressMessage: '第一轮：正在分析暗标检查范围。',
+          updatedAt: startedAt,
+        }
+      : identityCheckResult;
     const nextCheckTask: RejectionBackgroundTaskState = {
       task_id: `local-${Date.now()}`,
       type: 'rejection-check-run',
@@ -1213,6 +1464,10 @@ function RejectionCheckPage() {
       setLogicCheckResult(nextLogicCheckResult);
     }
 
+    if (runOptions.identityCheck) {
+      setIdentityCheckResult(nextIdentityCheckResult);
+    }
+
     setCheckTask(nextCheckTask);
 
     try {
@@ -1230,6 +1485,7 @@ function RejectionCheckPage() {
         checkOptions: options,
         runOptions,
         customCheckItems,
+        identityExtraKeywords,
       });
       showToast('检查任务已在后台启动', 'success');
     } catch (error) {
@@ -1246,6 +1502,11 @@ function RejectionCheckPage() {
       }
       if (runOptions.logicCheck) {
         setLogicCheckResult((prev) => prev.inputSignature === bidSignature
+          ? { ...prev, status: 'error', error: message, progressMessage: message, updatedAt: new Date().toISOString() }
+          : prev);
+      }
+      if (runOptions.identityCheck) {
+        setIdentityCheckResult((prev) => prev.inputSignature === currentIdentityCheckInputSignature
           ? { ...prev, status: 'error', error: message, progressMessage: message, updatedAt: new Date().toISOString() }
           : prev);
       }
@@ -1266,6 +1527,7 @@ function RejectionCheckPage() {
       rejectionCheck: tabId === 'rejection',
       typoCheck: tabId === 'typo',
       logicCheck: tabId === 'logic',
+      identityCheck: tabId === 'identity',
     });
   }
 
@@ -1383,6 +1645,38 @@ function RejectionCheckPage() {
     }, '保存逻辑谬误结果状态失败');
   }
 
+  function toggleIdentityFinding(findingId: string) {
+    const next = {
+      ...identityCheckResult,
+      activeFindingId: identityCheckResult.activeFindingId === findingId ? undefined : findingId,
+      updatedAt: new Date().toISOString(),
+    };
+    setIdentityCheckResult(next);
+    persistRejectionState({
+      identityCheckResult: { activeFindingId: next.activeFindingId, updatedAt: next.updatedAt },
+    }, '保存暗标检查结果状态失败');
+  }
+
+  function deleteIdentityFinding(findingId: string) {
+    const findings = identityCheckResult.findings.filter((item) => item.id !== findingId);
+    const next = {
+      ...identityCheckResult,
+      findings,
+      activeFindingId: identityCheckResult.activeFindingId === findingId ? undefined : identityCheckResult.activeFindingId,
+      progressMessage: findings.length ? `保留 ${findings.length} 个暗标风险` : '所有暗标风险已处理',
+      updatedAt: new Date().toISOString(),
+    };
+    setIdentityCheckResult(next);
+    persistRejectionState({
+      identityCheckResult: {
+        findings,
+        activeFindingId: next.activeFindingId,
+        progressMessage: next.progressMessage,
+        updatedAt: next.updatedAt,
+      },
+    }, '保存暗标检查结果状态失败');
+  }
+
   function markStaleTasksWithoutActive(activeTypes: Set<string>) {
     if (!activeTypes.has('rejection-items-extraction')) {
       markStaleExtractionTask();
@@ -1415,7 +1709,7 @@ function RejectionCheckPage() {
 
   function markStaleCheckTask() {
     const staleMessage = '上次检查未完成，请重新检查';
-    const markResult = <T extends RejectionCheckResultState | TypoCheckResultState | LogicCheckResultState>(prev: T): T => (prev.status === 'running'
+    const markResult = <T extends RejectionCheckResultState | TypoCheckResultState | LogicCheckResultState | IdentityCheckResultState>(prev: T): T => (prev.status === 'running'
       ? {
           ...prev,
           status: 'error',
@@ -1427,6 +1721,7 @@ function RejectionCheckPage() {
     setRejectionCheckResult(markResult);
     setTypoCheckResult(markResult);
     setLogicCheckResult(markResult);
+    setIdentityCheckResult(markResult);
     setCheckTask((prev) => prev?.status === 'running'
       ? {
           ...prev,
@@ -1440,7 +1735,7 @@ function RejectionCheckPage() {
   }
 
   function switchStep(nextStep: RejectionCheckStep) {
-    if (nextStep !== step && !ensureCustomCheckItemsSaved()) {
+    if (nextStep !== step && (!ensureCustomCheckItemsSaved() || !ensureIdentityExtraKeywordsSaved())) {
       return;
     }
     if (nextStep === 'items' && !canGoNext) {
@@ -1462,7 +1757,9 @@ function RejectionCheckPage() {
     || visibleTypoCheckStatus === 'success'
     || visibleTypoCheckStatus === 'error'
     || visibleLogicCheckStatus === 'success'
-    || visibleLogicCheckStatus === 'error';
+    || visibleLogicCheckStatus === 'error'
+    || visibleIdentityCheckStatus === 'success'
+    || visibleIdentityCheckStatus === 'error';
   const checkActionLabel = checkRunning
     ? '检查中...'
     : hasVisibleCheckResult
@@ -1501,6 +1798,17 @@ function RejectionCheckPage() {
         : hasStaleLogicCheckResult
           ? '投标文件已变化，请重新检查以刷新结果。'
           : '点击开始检查后展示逻辑谬误检查结果。';
+  const identityCheckSummaryText = visibleIdentityCheckStatus === 'running'
+    ? identityCheckResult.progressMessage || 'AI 正在检查暗标泄漏风险。'
+    : visibleIdentityCheckStatus === 'error'
+      ? identityCheckResult.error || '暗标检查失败，请重新检查。'
+      : visibleIdentityCheckStatus === 'success'
+        ? visibleIdentityFindings.length
+          ? `发现 ${visibleIdentityFindings.length} 个暗标风险。`
+          : '暂未发现明确暗标泄漏。'
+        : hasStaleIdentityCheckResult
+          ? '投标文件或补充词已变化，请重新检查以刷新结果。'
+          : '点击开始检查后展示暗标检查结果。';
 
   function renderDisabledCheckContent(label: string) {
     return (
@@ -1727,7 +2035,112 @@ function RejectionCheckPage() {
     );
   }
 
+  function renderIdentityFindingGroups(findings: IdentityCheckFinding[]) {
+    const groups = groupFindingsByBid(findings);
+    return (
+      <div className="rejection-finding-list">
+        {groups.map((group) => (
+          <section className="rejection-finding-group" key={group.document.id}>
+            {activeResultBidDocumentId === 'all' && (
+              <div className="rejection-finding-group-head">
+                <strong>{getBidDocumentLabel(bidDocuments, group.document.id)}</strong>
+                <span>{group.document.fileName} · {group.findings.length} 个暗标风险</span>
+              </div>
+            )}
+            {group.findings.map((finding) => (
+              <IdentityFindingItem
+                key={finding.id}
+                finding={finding}
+                bidLabel={getBidDocumentLabel(bidDocuments, finding.bidDocumentId)}
+                expanded={identityCheckResult.activeFindingId === finding.id}
+                onToggle={() => toggleIdentityFinding(finding.id)}
+                onDelete={() => deleteIdentityFinding(finding.id)}
+              />
+            ))}
+          </section>
+        ))}
+      </div>
+    );
+  }
+
+  function renderIdentityCheckContent() {
+    if (!checkOptions.identityCheck) {
+      return renderDisabledCheckContent('暗标检查');
+    }
+
+    return (
+      <>
+        <div className="rejection-finding-summary">
+          <div>
+            <span className="section-kicker">暗标检查</span>
+            <h3>{visibleIdentityCheckStatus === 'running' ? '正在检查暗标风险' : '暗标检查结果'}</h3>
+            <p>{identityCheckSummaryText}</p>
+          </div>
+          <div className={`rejection-result-status is-${visibleIdentityCheckStatus}`}>
+            <span>{checkRunStatusLabels[visibleIdentityCheckStatus]}</span>
+            <small>{visibleIdentityCheckStatus === 'success' ? `${visibleIdentityFindings.length} 个暗标风险` : identityCheckResult.progressMessage || '等待执行'}</small>
+          </div>
+        </div>
+        {renderBidResultFilter(visibleIdentityFindings)}
+
+        {visibleIdentityCheckStatus === 'running' ? (
+          <div className="markdown-empty-state rejection-finding-empty">
+            <strong>AI 正在执行三轮暗标检查</strong>
+            <p>{identityCheckResult.progressMessage || '正在分析检查范围、定位原文并补充定稿。'}</p>
+          </div>
+        ) : visibleIdentityCheckStatus === 'error' ? (
+          <div className="markdown-empty-state rejection-finding-empty is-error">
+            <strong>{identityCheckResult.error || '暗标检查失败'}</strong>
+            <p>请确认模型配置可用，或重新检查当前投标文件。</p>
+            <button type="button" className="secondary-action" onClick={() => retrySingleCheck('identity')} disabled={checkRunning || extractionRunning || !bidDocuments.length}>
+              重新检查暗标
+            </button>
+          </div>
+        ) : filterFindingsByActiveBid(visibleIdentityFindings).length ? (
+          renderIdentityFindingGroups(visibleIdentityFindings)
+        ) : (
+          <div className="markdown-empty-state rejection-finding-empty">
+            <strong>{visibleIdentityCheckStatus === 'success' ? '暂未发现暗标风险' : hasStaleIdentityCheckResult ? '检查输入已变化' : '等待暗标检查'}</strong>
+            <p>{identityCheckSummaryText}</p>
+          </div>
+        )}
+      </>
+    );
+  }
+
+  const exportExcel = async () => {
+    if (exportingExcel) return;
+    if (!hasVisibleCheckResult) {
+      showToast('当前没有可导出的检查结果', 'info');
+      return;
+    }
+    setExportingExcel(true);
+    try {
+      const result = await window.yibiao?.rejectionCheck.exportExcel();
+      if (!result || result.canceled) return;
+      showToast(result.message || 'Excel 已导出', 'success');
+      if (result.path) setExportedExcelPath(result.path);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : '导出 Excel 失败', 'error');
+    } finally {
+      setExportingExcel(false);
+    }
+  };
+
   const toolbarGroups: FloatingToolbarGroup[] = [
+    {
+      id: 'rejection-check-export',
+      actions: step === 'results' ? [
+        {
+          id: 'export-excel',
+          label: exportingExcel ? '导出中...' : '导出 Excel',
+          variant: 'secondary',
+          disabled: exportingExcel || checkRunning || !hasVisibleCheckResult,
+          tooltip: !hasVisibleCheckResult ? '请先完成至少一项检查' : '导出废标项、错别字、逻辑和暗标检查结果',
+          onClick: () => { void exportExcel(); },
+        },
+      ] : [],
+    },
     {
       id: 'rejection-check-reset',
       actions: [
@@ -1948,16 +2361,24 @@ function RejectionCheckPage() {
           >
             <div className="analysis-result-head rejection-reader-head">
               <div className="rejection-reader-heading">
-                <strong>{activeResultTab === 'analysis' ? '解析结果' : '自定义检查项'}</strong>
+                <strong>{activeResultTab === 'analysis' ? '解析结果' : activeResultTab === 'custom' ? '自定义检查项' : '暗标补充词'}</strong>
                 <span>{activeResultTab === 'analysis'
                   ? `${extractionStatusLabels[visibleExtractionStatus]} · ${resultSourceLabel}`
-                  : customCheckItemsSaving
-                    ? '正在保存自定义检查项'
-                    : extractionRunning || checkRunning
-                      ? '任务运行中暂不能修改自定义检查项，当前检查会使用启动任务时的内容'
-                      : customCheckItemsDirty
-                        ? '内容尚未保存，保存后才用于废标项检查'
-                        : '可填写补充检查口径、人工关注项或项目经验'}</span>
+                  : activeResultTab === 'custom'
+                    ? (customCheckItemsSaving
+                      ? '正在保存自定义检查项'
+                      : extractionRunning || checkRunning
+                        ? '任务运行中暂不能修改自定义检查项，当前检查会使用启动任务时的内容'
+                        : customCheckItemsDirty
+                          ? '内容尚未保存，保存后才用于废标项检查'
+                          : '可填写补充检查口径、人工关注项或项目经验')
+                    : (identityExtraKeywordsSaving
+                      ? '正在保存暗标补充词'
+                      : extractionRunning || checkRunning
+                        ? '任务运行中暂不能修改暗标补充词，当前检查会使用启动任务时的内容'
+                        : identityExtraKeywordsDirty
+                          ? '内容尚未保存，保存后才用于暗标检查'
+                          : '一行一词，只用于暗标检查，不进入废标项检查')}</span>
               </div>
               {activeResultTab === 'custom' && (
                 <div className="rejection-custom-save-actions">
@@ -1971,6 +2392,21 @@ function RejectionCheckPage() {
                     disabled={!customCheckItemsDirty || customCheckItemsDisabled}
                   >
                     {customCheckItemsSaving ? '保存中...' : '保存'}
+                  </button>
+                </div>
+              )}
+              {activeResultTab === 'identity' && (
+                <div className="rejection-custom-save-actions">
+                  <span className={`rejection-custom-save-state${identityExtraKeywordsDirty ? ' is-dirty' : ''}`}>
+                    {identityExtraKeywordsDirty ? '有未保存修改' : '已保存'}
+                  </span>
+                  <button
+                    type="button"
+                    className="primary-action"
+                    onClick={() => void saveIdentityExtraKeywords()}
+                    disabled={!identityExtraKeywordsDirty || identityExtraKeywordsDisabled}
+                  >
+                    {identityExtraKeywordsSaving ? '保存中...' : '保存'}
                   </button>
                 </div>
               )}
@@ -1989,7 +2425,7 @@ function RejectionCheckPage() {
                   <p>{extractionRunning ? '正在提取招标文件中的无效投标、废标项和可能风险。' : '进入本步骤后会自动解析；也可以点击上方“开始解析”。'}</p>
                 </div>
               )
-            ) : (
+            ) : activeResultTab === 'custom' ? (
               <MarkdownEditor
                 className="rejection-custom-editor"
                 value={customCheckItemsDraft}
@@ -1997,6 +2433,24 @@ function RejectionCheckPage() {
                 disabled={customCheckItemsDisabled}
                 placeholder="输入自定义检查项，例如：\n- 关注报价文件是否存在多处不一致\n- 关注资格证明材料有效期是否覆盖投标截止时间\n- 关注技术偏离表是否遗漏关键参数响应"
               />
+            ) : (
+              <div className="rejection-identity-extra-panel">
+                <div className="rejection-identity-checklist">
+                  <strong>内置暗标检查口径</strong>
+                  <ul>
+                    {identityBuiltinChecklist.map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                </div>
+                <MarkdownEditor
+                  className="rejection-custom-editor"
+                  value={identityExtraKeywordsDraft}
+                  onChange={updateIdentityExtraKeywordsDraft}
+                  disabled={identityExtraKeywordsDisabled}
+                  placeholder="一行一词，例如：\n张三\n某某建设\n某某市\n历史业绩项目名"
+                />
+              </div>
             )}
           </section>
         </>
@@ -2040,14 +2494,18 @@ function RejectionCheckPage() {
                   ? 'disabled'
                   : tab.id === 'rejection'
                     ? visibleRejectionCheckStatus
-                    : tab.id === 'typo'
-                      ? visibleTypoCheckStatus
-                      : visibleLogicCheckStatus;
+                  : tab.id === 'typo'
+                    ? visibleTypoCheckStatus
+                    : tab.id === 'logic'
+                      ? visibleLogicCheckStatus
+                      : visibleIdentityCheckStatus;
                 const progressMessage = tab.id === 'rejection'
                   ? rejectionCheckResult.progressMessage
                   : tab.id === 'typo'
                     ? typoCheckResult.progressMessage
-                    : logicCheckResult.progressMessage;
+                    : tab.id === 'logic'
+                      ? logicCheckResult.progressMessage
+                      : identityCheckResult.progressMessage;
                 const progress = getCheckResultTabProgress(status, progressMessage);
                 return (
                   <button
@@ -2113,7 +2571,11 @@ function RejectionCheckPage() {
                     </div>
                   )}
                 </>
-              ) : activeCheckResult.id === 'typo' ? renderTypoCheckContent() : renderLogicCheckContent()}
+              ) : activeCheckResult.id === 'typo'
+                ? renderTypoCheckContent()
+                : activeCheckResult.id === 'logic'
+                  ? renderLogicCheckContent()
+                  : renderIdentityCheckContent()}
             </div>
           </section>
 
@@ -2154,6 +2616,16 @@ function RejectionCheckPage() {
                       onCheckedChange={(checked) => setDraftCheckOptions((prev) => ({ ...prev, logicCheck: checked }))}
                       aria-label="逻辑谬误检查" />
                   </label>
+                  <label className="content-generation-config-row">
+                    <span>
+                      <strong>暗标检查</strong>
+                      <small>检查人名、单位、历史项目、联系方式、地区和英文等可能暴露身份的内容，默认开启。</small>
+                    </span>
+                    <AppSwitch
+                      checked={draftCheckOptions.identityCheck}
+                      onCheckedChange={(checked) => setDraftCheckOptions((prev) => ({ ...prev, identityCheck: checked }))}
+                      aria-label="暗标检查" />
+                  </label>
                 </div>
 
                 <div className="content-regenerate-actions">
@@ -2172,6 +2644,29 @@ function RejectionCheckPage() {
       )}
 
       <FloatingToolbar groups={toolbarGroups} label="废标项检查工具条" />
+      <AppDialog
+        open={Boolean(exportedExcelPath)}
+        onOpenChange={(open) => { if (!open) setExportedExcelPath(''); }}
+        kicker="导出完成"
+        title="是否打开 Excel"
+        description="检查结果已保存到本地，可直接打开核对。"
+        actions={(
+          <>
+            <button type="button" className="secondary-action" onClick={() => setExportedExcelPath('')}>稍后打开</button>
+            <button
+              type="button"
+              className="primary-action"
+              onClick={() => {
+                const filePath = exportedExcelPath;
+                setExportedExcelPath('');
+                if (filePath) void window.yibiao?.export.openFile(filePath);
+              }}
+            >
+              打开文件
+            </button>
+          </>
+        )}
+      />
     </div>
   );
 }

@@ -169,6 +169,8 @@ const bridge = {
     saveOutlineConfig: (payload) => ipcRenderer.invoke('technical-plan:save-outline-config', payload),
     saveOutlineSelection: (payload) => ipcRenderer.invoke('tasks:confirm-outline-selection', payload),
     saveOutline: (outlineData) => ipcRenderer.invoke('technical-plan:save-outline', outlineData),
+    importOutlineDocument: (filePaths) => ipcRenderer.invoke('technical-plan:import-outline-document', filePaths),
+    exportMarkdown: (payload) => ipcRenderer.invoke('technical-plan:export-markdown', payload),
     saveGlobalFactsConfig: (payload) => ipcRenderer.invoke('technical-plan:save-global-facts-config', payload),
     saveGlobalFacts: (globalFacts) => ipcRenderer.invoke('technical-plan:save-global-facts', globalFacts),
     saveContentGenerationOptions: (options) => ipcRenderer.invoke('technical-plan:save-content-generation-options', options),
@@ -196,6 +198,7 @@ const bridge = {
     saveUiState: (payload) => ipcRenderer.invoke('duplicate-check:save-ui-state', payload),
     updateState: (partial) => ipcRenderer.invoke('duplicate-check:update-state', partial),
     clear: () => ipcRenderer.invoke('duplicate-check:clear'),
+    exportExcel: () => ipcRenderer.invoke('duplicate-check:export-excel'),
   },
   rejectionCheck: {
     loadState: () => ipcRenderer.invoke('rejection-check:load-state'),
@@ -205,6 +208,7 @@ const bridge = {
     saveUiState: (payload) => ipcRenderer.invoke('rejection-check:save-ui-state', payload),
     updateState: (partial) => ipcRenderer.invoke('rejection-check:update-state', partial),
     clear: () => ipcRenderer.invoke('rejection-check:clear'),
+    exportExcel: () => ipcRenderer.invoke('rejection-check:export-excel'),
   },
   templates: {
     list: () => ipcRenderer.invoke('templates:list'),
@@ -220,6 +224,8 @@ const bridge = {
     suppressOutlineSelectionAutoConfirmation: (payload) => ipcRenderer.invoke('tasks:suppress-outline-selection-auto-confirmation', payload),
     startGlobalFactsGeneration: (payload) => ipcRenderer.invoke('tasks:start-global-facts-generation', payload),
     startContentGeneration: (payload) => ipcRenderer.invoke('tasks:start-content-generation', payload),
+    startTemplateFill: (payload) => ipcRenderer.invoke('tasks:start-template-fill', payload),
+    startPointToPoint: (payload) => ipcRenderer.invoke('tasks:start-point-to-point', payload),
     pauseContentGeneration: () => ipcRenderer.invoke('tasks:pause-content-generation'),
     startRejectionItemsExtraction: (payload) => ipcRenderer.invoke('tasks:start-rejection-items-extraction', payload),
     startRejectionCheck: (payload) => ipcRenderer.invoke('tasks:start-rejection-check', payload),

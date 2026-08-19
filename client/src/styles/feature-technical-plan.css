@@ -440,6 +440,32 @@
   color: var(--yb-danger);
 }
 
+.bid-briefing-body {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 4px 16px;
+}
+
+.bid-briefing-incomplete {
+  margin: 0;
+  padding: 10px 12px;
+  color: #8a5a12;
+  background: rgba(245, 176, 65, 0.12);
+  border: 1px solid rgba(245, 176, 65, 0.28);
+  border-radius: var(--yb-radius-md);
+  font-size: 13px;
+}
+
+.bid-briefing-card {
+  padding: 16px 18px;
+  background: #fff;
+  border: 1px solid rgba(33, 116, 253, 0.12);
+  border-radius: var(--yb-radius-lg);
+}
+
 .bid-analysis-reader {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
@@ -2339,6 +2365,39 @@
 .outline-config-action:disabled {
   cursor: not-allowed;
   opacity: 0.5;
+}
+
+.outline-import-preview-card {
+  width: min(720px, calc(100vw - 40px));
+}
+
+.outline-import-preview-warnings {
+  margin-bottom: 12px;
+  color: #8a5a12;
+  font-size: 13px;
+}
+
+.outline-import-preview-tree {
+  max-height: min(420px, 50vh);
+  overflow: auto;
+  padding: 8px 0;
+}
+
+.outline-import-preview-node {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.outline-import-preview-node strong {
+  font-size: 13px;
+}
+
+.outline-import-preview-node em {
+  color: var(--yb-text-muted);
+  font-size: 12px;
+  font-style: normal;
 }
 
 .outline-generation-config-card {

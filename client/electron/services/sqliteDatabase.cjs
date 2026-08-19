@@ -3,7 +3,7 @@ const path = require('node:path');
 const Database = require('better-sqlite3');
 const { getWorkspaceDatabasePath } = require('../utils/paths.cjs');
 
-const schemaVersion = 23;
+const schemaVersion = 24;
 
 function createInitialSchema(db) {
   db.exec(`
@@ -593,6 +593,7 @@ function createRejectionCheckSchema(db) {
       active_result_tab TEXT NOT NULL DEFAULT 'analysis',
       active_check_result_tab TEXT NOT NULL DEFAULT 'rejection',
       custom_check_items TEXT NOT NULL DEFAULT '',
+      identity_extra_keywords TEXT NOT NULL DEFAULT '',
       check_options_json TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
@@ -699,6 +700,45 @@ function createRejectionCheckSchema(db) {
 
     CREATE INDEX IF NOT EXISTS idx_rejection_check_logic_order
     ON rejection_check_logic_findings(sort_order);
+
+    CREATE TABLE IF NOT EXISTS rejection_check_identity_findings (
+      finding_id TEXT PRIMARY KEY,
+      bid_document_id TEXT,
+      category TEXT NOT NULL,
+      matched_text TEXT NOT NULL,
+      original_excerpt TEXT NOT NULL,
+      location_hint TEXT NOT NULL,
+      risk_reason TEXT NOT NULL,
+      suggestion TEXT NOT NULL,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_rejection_check_identity_order
+    ON rejection_check_identity_findings(sort_order);
+  `);
+}
+
+function createRejectionCheckIdentitySchema(db) {
+  addColumnIfMissing(db, 'rejection_check_meta', 'identity_extra_keywords', "TEXT NOT NULL DEFAULT ''");
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS rejection_check_identity_findings (
+      finding_id TEXT PRIMARY KEY,
+      bid_document_id TEXT,
+      category TEXT NOT NULL,
+      matched_text TEXT NOT NULL,
+      original_excerpt TEXT NOT NULL,
+      location_hint TEXT NOT NULL,
+      risk_reason TEXT NOT NULL,
+      suggestion TEXT NOT NULL,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_rejection_check_identity_order
+    ON rejection_check_identity_findings(sort_order);
   `);
 }
 
@@ -1084,6 +1124,13 @@ const schemaHealthTableGroups = [
     repair: createRejectionCheckSchema,
   },
   {
+    version: 24,
+    tables: [
+      'rejection_check_identity_findings',
+    ],
+    repair: createRejectionCheckIdentitySchema,
+  },
+  {
     version: 3,
     tables: [
       'knowledge_folders',
@@ -1227,6 +1274,20 @@ const schemaHealthColumnGroups = [
   {
     version: 12,
     table: 'rejection_check_logic_findings',
+    columns: {
+      bid_document_id: 'TEXT',
+    },
+  },
+  {
+    version: 24,
+    table: 'rejection_check_meta',
+    columns: {
+      identity_extra_keywords: "TEXT NOT NULL DEFAULT ''",
+    },
+  },
+  {
+    version: 24,
+    table: 'rejection_check_identity_findings',
     columns: {
       bid_document_id: 'TEXT',
     },
@@ -1459,6 +1520,11 @@ const migrations = [
     version: 23,
     description: '新增可行性研究报告工作区表结构',
     up: createFeasibilityReportSchema,
+  },
+  {
+    version: 24,
+    description: '新增废标项检查暗标检查结果表',
+    up: createRejectionCheckIdentitySchema,
   },
 ];
 

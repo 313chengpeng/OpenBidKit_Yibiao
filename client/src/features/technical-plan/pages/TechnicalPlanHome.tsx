@@ -107,6 +107,8 @@ const resetState = {
   globalFactsAdjustmentTask: undefined,
   globalFacts: [] as GlobalFactGroupState[],
   contentGenerationTask: undefined,
+  templateFillTask: undefined,
+  pointToPointTask: undefined,
   contentGenerationOptions: undefined,
   contentGenerationSections: {},
   contentGenerationPlans: {},
@@ -284,7 +286,7 @@ function workflowLabel(kind: TechnicalPlanWorkflowKind) {
 }
 
 function hasRunningTechnicalPlanTask(state: TechnicalPlanState) {
-  return [state.bidSectionExtractionTask, state.bidAnalysisTask, state.outlineGenerationTask, state.outlineAdjustmentTask, state.globalFactsTask, state.globalFactsAdjustmentTask, state.contentGenerationTask]
+  return [state.bidSectionExtractionTask, state.bidAnalysisTask, state.outlineGenerationTask, state.outlineAdjustmentTask, state.globalFactsTask, state.globalFactsAdjustmentTask, state.contentGenerationTask, state.templateFillTask, state.pointToPointTask]
     .some((task) => task?.status === 'running' || task?.status === 'pausing');
 }
 
@@ -733,6 +735,8 @@ function TechnicalPlanHome({ workflowKind, registerLeaveGuard, onSectionChange }
             globalFactsAdjustmentTask: outlineDataReset ? undefined : prev.globalFactsAdjustmentTask,
             globalFacts: outlineDataReset ? [] : prev.globalFacts,
             contentGenerationTask: outlineDataReset ? undefined : prev.contentGenerationTask,
+            templateFillTask: outlineDataReset ? undefined : prev.templateFillTask,
+            pointToPointTask: outlineDataReset ? undefined : prev.pointToPointTask,
             contentGenerationOptions: outlineDataReset ? undefined : prev.contentGenerationOptions,
             contentGenerationSections: outlineDataReset ? {} : prev.contentGenerationSections,
             contentGenerationPlans: outlineDataReset ? {} : prev.contentGenerationPlans,
@@ -763,6 +767,8 @@ function TechnicalPlanHome({ workflowKind, registerLeaveGuard, onSectionChange }
             globalFactsAdjustmentTask: hasOwnField(technicalPlan, 'globalFactsAdjustmentTask') ? trimTaskLogs(technicalPlan.globalFactsAdjustmentTask) : prev.globalFactsAdjustmentTask,
             globalFacts: hasOwnField(technicalPlan, 'globalFacts') ? (technicalPlan.globalFacts || []) : prev.globalFacts,
             contentGenerationTask: hasOwnField(technicalPlan, 'contentGenerationTask') ? trimTaskLogs(technicalPlan.contentGenerationTask) : (outlineDataChanged ? undefined : prev.contentGenerationTask),
+            templateFillTask: hasOwnField(technicalPlan, 'templateFillTask') ? trimTaskLogs(technicalPlan.templateFillTask) : (outlineDataChanged ? undefined : prev.templateFillTask),
+            pointToPointTask: hasOwnField(technicalPlan, 'pointToPointTask') ? trimTaskLogs(technicalPlan.pointToPointTask) : (outlineDataChanged ? undefined : prev.pointToPointTask),
             contentGenerationSections: hasOwnField(technicalPlan, 'contentGenerationSections') ? (technicalPlan.contentGenerationSections || {}) : (outlineDataChanged ? {} : prev.contentGenerationSections),
             contentGenerationPlans: hasOwnField(technicalPlan, 'contentGenerationPlans') ? (technicalPlan.contentGenerationPlans || {}) : (outlineDataChanged ? {} : prev.contentGenerationPlans),
             contentIllustrationPlan: hasOwnField(technicalPlan, 'contentIllustrationPlan') ? technicalPlan.contentIllustrationPlan : (outlineDataChanged ? undefined : prev.contentIllustrationPlan),
@@ -839,6 +845,29 @@ function TechnicalPlanHome({ workflowKind, registerLeaveGuard, onSectionChange }
             contentGenerationPlans: hasOwnField(technicalPlan, 'contentGenerationPlans') ? (technicalPlan.contentGenerationPlans || {}) : prev.contentGenerationPlans,
             contentIllustrationPlan: hasOwnField(technicalPlan, 'contentIllustrationPlan') ? technicalPlan.contentIllustrationPlan : prev.contentIllustrationPlan,
             contentGenerationRuntime: hasOwnField(technicalPlan, 'contentGenerationRuntime') ? technicalPlan.contentGenerationRuntime : prev.contentGenerationRuntime,
+            outlineData: nextOutlineData,
+          };
+        }
+
+        if (taskType === 'template-fill-generation' || taskType === 'point-to-point-generation') {
+          const contentSection = event.contentSection;
+          const nextSections = hasOwnField(technicalPlan, 'contentGenerationSections')
+            ? (technicalPlan.contentGenerationSections || {})
+            : contentSection
+              ? { ...prev.contentGenerationSections, [contentSection.id]: contentSection }
+              : prev.contentGenerationSections;
+          const hasPatchOutlineData = hasOwnField(technicalPlan, 'outlineData') || hasOwnField(event, 'outlineData');
+          const patchOutlineData = hasOwnField(technicalPlan, 'outlineData') ? technicalPlan.outlineData : event.outlineData;
+          const nextOutlineData = hasPatchOutlineData
+            ? (patchOutlineData || null)
+            : contentSection?.content !== undefined && prev.outlineData
+              ? { ...prev.outlineData, outline: updateOutlineItemContent(prev.outlineData.outline, contentSection.id, contentSection.content) }
+              : prev.outlineData;
+          return {
+            ...prev,
+            templateFillTask: taskType === 'template-fill-generation' ? (latestTask || trimTaskLogs(technicalPlan.templateFillTask)) : prev.templateFillTask,
+            pointToPointTask: taskType === 'point-to-point-generation' ? (latestTask || trimTaskLogs(technicalPlan.pointToPointTask)) : prev.pointToPointTask,
+            contentGenerationSections: nextSections,
             outlineData: nextOutlineData,
           };
         }
@@ -1088,6 +1117,20 @@ function TechnicalPlanHome({ workflowKind, registerLeaveGuard, onSectionChange }
   const saveOutline = async (request: SaveOutlineRequest) => {
     const saved = await window.yibiao?.technicalPlan.saveOutline(request);
     setState((prev) => {
+      if (request.reason === 'replace') {
+        return {
+          ...prev,
+          ...(saved || {}),
+          outlineData: saved?.outlineData || request.outlineData,
+          contentGenerationSections: {},
+          contentGenerationPlans: {},
+          contentIllustrationPlan: undefined,
+          contentGenerationRuntime: undefined,
+          contentGenerationTask: undefined,
+          templateFillTask: undefined,
+          pointToPointTask: undefined,
+        };
+      }
       if (request.reason !== 'sort') {
         return { ...prev, ...(saved || {}), outlineData: saved?.outlineData || request.outlineData };
       }
@@ -1333,7 +1376,7 @@ function TechnicalPlanHome({ workflowKind, registerLeaveGuard, onSectionChange }
           referenceKnowledgeDocumentIds={state.referenceKnowledgeDocumentIds}
           outlineData={state.outlineData}
           task={state.outlineGenerationTask}
-          contentTaskStatus={state.contentGenerationTask?.status}
+          contentTaskStatus={[state.contentGenerationTask, state.templateFillTask, state.pointToPointTask].find((item) => item && ['running', 'pausing', 'paused'].includes(item.status))?.status}
           aiAdjustmentRunning={isOutlineAdjusting}
           onOutlineConfigChange={saveOutlineConfig}
           onOutlineSaved={saveOutline}
@@ -1363,6 +1406,8 @@ function TechnicalPlanHome({ workflowKind, registerLeaveGuard, onSectionChange }
           contentGenerationOptions={state.contentGenerationOptions}
           contentIllustrationPlan={state.contentIllustrationPlan}
           sections={state.contentGenerationSections}
+          templateFillTask={state.templateFillTask}
+          pointToPointTask={state.pointToPointTask}
           onContentGenerationOptionsChange={saveContentGenerationOptions}
           onContentSaved={saveChapterContent}
         />
