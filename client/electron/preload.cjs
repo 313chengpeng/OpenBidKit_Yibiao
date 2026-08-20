@@ -146,6 +146,7 @@ const bridge = {
     readMarkdown: (documentId) => ipcRenderer.invoke('knowledge-base:read-markdown', documentId),
     readItems: (documentId) => ipcRenderer.invoke('knowledge-base:read-items', documentId),
     readAnalysis: (documentId) => ipcRenderer.invoke('knowledge-base:read-analysis', documentId),
+    search: (payload) => ipcRenderer.invoke('knowledge-base:search', payload),
     onEvent: (callback) => {
       const listener = (_event, payload) => callback(payload);
       ipcRenderer.on('knowledge-base:event', listener);

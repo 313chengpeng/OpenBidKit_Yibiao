@@ -1136,6 +1136,16 @@ function ContentEditPage({
             </button>
           )}
         </div>
+        {(templateFillTask?.status === 'error' || pointToPointTask?.status === 'error') && (
+          <div className="content-chapter-task-errors" role="alert">
+            {templateFillTask?.status === 'error' && (
+              <p className="content-chapter-task-error">模板填写失败：{templateFillTask.error || '未知错误'}</p>
+            )}
+            {pointToPointTask?.status === 'error' && (
+              <p className="content-chapter-task-error">应答表生成失败：{pointToPointTask.error || '未知错误'}</p>
+            )}
+          </div>
+        )}
       </section>
 
       {showIllustrationStats && (

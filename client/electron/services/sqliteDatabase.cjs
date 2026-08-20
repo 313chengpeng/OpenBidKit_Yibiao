@@ -3,7 +3,9 @@ const path = require('node:path');
 const Database = require('better-sqlite3');
 const { getWorkspaceDatabasePath } = require('../utils/paths.cjs');
 
-const schemaVersion = 24;
+const { createKnowledgeSearchSchema, backfillKnowledgeSearch } = require('./knowledgeSearchIndex.cjs');
+
+const schemaVersion = 25;
 
 function createInitialSchema(db) {
   db.exec(`
@@ -1131,6 +1133,14 @@ const schemaHealthTableGroups = [
     repair: createRejectionCheckIdentitySchema,
   },
   {
+    version: 25,
+    tables: [
+      'knowledge_search_rows',
+      'knowledge_search_fts',
+    ],
+    repair: createKnowledgeSearchSchema,
+  },
+  {
     version: 3,
     tables: [
       'knowledge_folders',
@@ -1526,7 +1536,17 @@ const migrations = [
     description: '新增废标项检查暗标检查结果表',
     up: createRejectionCheckIdentitySchema,
   },
+  {
+    version: 25,
+    description: '新增知识库全局检索 FTS 索引',
+    up: migrateKnowledgeSearchSchema,
+  },
 ];
+
+function migrateKnowledgeSearchSchema(db) {
+  createKnowledgeSearchSchema(db);
+  backfillKnowledgeSearch(db, { force: true });
+}
 
 function timestampForFileName() {
   return new Date().toISOString().replace(/[-:]/g, '').replace(/T/, '-').replace(/\..*$/, '');

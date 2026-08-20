@@ -2097,6 +2097,15 @@ function createTechnicalPlanStore({ app, db, fileService, agentService, taskLogS
       saveOutlineData(outlineToSave);
       if (!outlineToSave?.outline?.length) {
         updateMeta({ outline_word_control_snapshot_json: null });
+      } else if (reason === 'replace') {
+        const meta = readMetaRow();
+        const shouldPersistWordControlSnapshot = Boolean(request.persistWordControlSnapshot) || !meta.outline_word_control_snapshot_json;
+        if (shouldPersistWordControlSnapshot) {
+          const wordControlSnapshot = normalizeOutlineWordControlOptions(
+            safeJsonParse(meta.outline_word_control_options_json, defaultOutlineWordControlOptions),
+          );
+          updateMeta({ outline_word_control_snapshot_json: JSON.stringify(wordControlSnapshot) });
+        }
       }
       const rows = flattenOutlineItems(outlineToSave?.outline || []);
       const nextIds = new Set(rows.map((row) => row.node_id));
@@ -2113,8 +2122,14 @@ function createTechnicalPlanStore({ app, db, fileService, agentService, taskLogS
       ? safeJsonParse(readMetaRow().content_generation_runtime_json, undefined)
       : undefined;
     const sortedContentTask = reason === 'sort' ? loadTask('content-generation') : undefined;
+    const savedMeta = readMetaRow();
     return {
       outlineData: savedOutlineData,
+      ...(reason === 'replace' ? {
+        outlineWordControlSnapshot: savedMeta.outline_word_control_snapshot_json
+          ? normalizeOutlineWordControlOptions(safeJsonParse(savedMeta.outline_word_control_snapshot_json, defaultOutlineWordControlOptions))
+          : undefined,
+      } : {}),
       contentIllustrationPlan: reason === 'sort' ? savedIllustrationPlan : undefined,
       ...(reason === 'sort' ? {
         contentGenerationTask: sortedContentTask,

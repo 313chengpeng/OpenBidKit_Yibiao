@@ -2,7 +2,8 @@ import { Profiler, startTransition, useEffect, useLayoutEffect, useMemo, useRef,
 import * as Dialog from '@radix-ui/react-dialog';
 import { trackPageView } from '../../../shared/analytics/analytics';
 import { AppDialog, InlineSpinner, isLibreOfficeRequiredMessage, MarkdownFullscreenViewer, MarkdownRenderer, ProgressBar, useDocumentParseNotice, useToast } from '../../../shared/ui';
-import type { KnowledgeAnalysisSnapshot, KnowledgeBaseIndex, KnowledgeDocument, KnowledgeItem } from '../types';
+import { useKnowledgeSearch } from '../hooks/useKnowledgeSearch';
+import type { KnowledgeAnalysisSnapshot, KnowledgeBaseIndex, KnowledgeDocument, KnowledgeItem, KnowledgeSearchHit } from '../types';
 
 declare global {
   interface Window {
@@ -293,6 +294,13 @@ function logProfilerRender(
 type KnowledgeViewer = {
   document: KnowledgeDocument;
   mode: 'analysis' | 'items' | 'markdown';
+  focusedItemId?: string;
+};
+
+const searchHitTypeLabels: Record<KnowledgeSearchHit['type'], string> = {
+  document: '文档',
+  item: '条目',
+  block: '段落',
 };
 
 function KnowledgeBasePage() {
@@ -316,6 +324,7 @@ function KnowledgeBasePage() {
   const [dragPayload, setDragPayload] = useState<KnowledgeDragPayload | null>(null);
   const [folderDropTargetId, setFolderDropTargetId] = useState<string | null>(null);
   const [documentDropTarget, setDocumentDropTarget] = useState<KnowledgeDocumentDropTarget | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
   const [dragSaving, setDragSaving] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<
     | { type: 'folder'; folderId: string; folderName: string; count: number }
@@ -345,6 +354,7 @@ function KnowledgeBasePage() {
   }, [index.documents]);
   const documents = activeFolder ? documentsByFolder.get(activeFolder.id) || emptyDocuments : emptyDocuments;
   const visibleDocuments = documents.slice(0, Math.min(visibleDocumentCount, documents.length));
+  const { hits: searchHits, loading: searchLoading, keyword: searchKeyword } = useKnowledgeSearch(searchQuery);
 
   useEffect(() => {
     trackPageView(viewer ? `knowledge-base/viewer/${viewer.mode}` : 'knowledge-base/library');
@@ -746,7 +756,7 @@ function KnowledgeBasePage() {
     return trace;
   };
 
-  const openDocument = async (document: KnowledgeDocument, mode: KnowledgeViewer['mode']) => {
+  const openDocument = async (document: KnowledgeDocument, mode: KnowledgeViewer['mode'], focusedItemId?: string) => {
     if (mode === 'analysis' && !developerMode) {
       return;
     }
@@ -756,7 +766,7 @@ function KnowledgeBasePage() {
     setViewerLoading(mode !== 'analysis');
     logRenderDebug(trace, 'state:loading-start', { loading: mode !== 'analysis' });
     startTransition(() => {
-      setViewer({ document, mode });
+      setViewer({ document, mode, focusedItemId });
       setMarkdownPreview('');
       setItemsPreview([]);
       if (mode === 'analysis') {
@@ -825,6 +835,16 @@ function KnowledgeBasePage() {
     }
   };
 
+  const openSearchHit = (hit: KnowledgeSearchHit) => {
+    const document = index.documents.find((item) => item.id === hit.documentId);
+    if (!document) {
+      showToast('未找到对应知识库文档', 'info');
+      return;
+    }
+    setActiveFolderId(hit.folderId || document.folder_id);
+    void openDocument(document, hit.type === 'block' ? 'markdown' : 'items', hit.itemId);
+  };
+
   const closeViewer = () => {
     viewerRequestIdRef.current += 1;
     finishActiveViewerTrace('viewer-closed');
@@ -864,6 +884,7 @@ function KnowledgeBasePage() {
         <KnowledgeDocumentViewer
           document={viewer.document}
           mode={viewer.mode}
+          focusedItemId={viewer.focusedItemId}
           itemsPreview={itemsPreview}
           markdownPreview={markdownPreview}
           analysisSnapshot={analysisSnapshot}
@@ -890,6 +911,13 @@ function KnowledgeBasePage() {
           <small>{index.folders.length} 个文件夹 / {index.documents.length} 个文档</small>
         </div>
         <div className="knowledge-toolbar-actions">
+          <input
+            className="knowledge-search-input"
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+            placeholder="搜索文档、条目或正文"
+            aria-label="搜索知识库"
+          />
           <button type="button" className="secondary-action" onClick={() => setShowCreateFolder((value) => !value)} disabled={listLoading}>新建文件夹</button>
           <button type="button" className="primary-action" onClick={uploadDocuments} disabled={loading || !activeFolder}>
             {loading ? '处理中...' : '上传文档'}
@@ -983,11 +1011,39 @@ function KnowledgeBasePage() {
 
         <main className="knowledge-document-panel">
           <div className="knowledge-panel-head">
-            <strong>{activeFolder?.name || '未选择文件夹'}</strong>
-            <span>{documents.length} 个文档</span>
+            <strong>{searchKeyword ? '检索结果' : activeFolder?.name || '未选择文件夹'}</strong>
+            <span>{searchKeyword ? `${searchHits.length} 条` : `${documents.length} 个文档`}</span>
           </div>
 
-          {listLoading ? (
+          {searchKeyword ? (
+            searchLoading ? (
+              <div className="knowledge-empty-box large">
+                <strong>正在检索知识库...</strong>
+                <p>会同时匹配文档名、知识条目和正文段落。</p>
+              </div>
+            ) : searchHits.length ? (
+              <div className="knowledge-search-results">
+                {searchHits.map((hit) => (
+                  <button
+                    type="button"
+                    className="knowledge-search-hit"
+                    key={`${hit.type}-${hit.documentId}-${hit.itemId || hit.blockId || 'doc'}`}
+                    onClick={() => openSearchHit(hit)}
+                  >
+                    <span className="knowledge-search-hit-type">{searchHitTypeLabels[hit.type]}</span>
+                    <strong>{hit.title}</strong>
+                    <small>{[hit.folderName, hit.fileName].filter(Boolean).join(' / ')}</small>
+                    {hit.snippet ? <p>{hit.snippet}</p> : null}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div className="knowledge-empty-box large">
+                <strong>没有匹配的知识内容</strong>
+                <p>可换个关键词，或先到其他文件夹上传并处理完成后再搜。</p>
+              </div>
+            )
+          ) : listLoading ? (
             <div className="knowledge-empty-box large">
               <strong>正在读取知识库...</strong>
               <p>文档列表加载完成后会自动显示。</p>
@@ -1086,6 +1142,7 @@ function KnowledgeBasePage() {
 interface KnowledgeDocumentViewerProps {
   document: KnowledgeDocument;
   mode: KnowledgeViewer['mode'];
+  focusedItemId?: string;
   itemsPreview: KnowledgeItem[];
   markdownPreview: string;
   analysisSnapshot: KnowledgeAnalysisSnapshot | null;
@@ -1102,6 +1159,7 @@ interface KnowledgeDocumentViewerProps {
 function KnowledgeDocumentViewer({
   document,
   mode,
+  focusedItemId,
   itemsPreview,
   markdownPreview,
   analysisSnapshot,
@@ -1218,6 +1276,7 @@ function KnowledgeDocumentViewer({
                 <KnowledgeItemCard
                   key={item.id}
                   item={item}
+                  focused={item.id === focusedItemId}
                   developerMode={developerMode}
                   onOpenSource={() => openSourceItem(item)}
                 />
@@ -1276,13 +1335,22 @@ function KnowledgeDocumentViewer({
 
 interface KnowledgeItemCardProps {
   item: KnowledgeItem;
+  focused?: boolean;
   developerMode: boolean;
   onOpenSource: () => void;
 }
 
-function KnowledgeItemCard({ item, developerMode, onOpenSource }: KnowledgeItemCardProps) {
+function KnowledgeItemCard({ item, focused, developerMode, onOpenSource }: KnowledgeItemCardProps) {
+  const cardRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (focused) {
+      cardRef.current?.scrollIntoView({ block: 'center' });
+    }
+  }, [focused]);
+
   return (
-    <article className="knowledge-item-card">
+    <article ref={cardRef} className={`knowledge-item-card${focused ? ' is-focused' : ''}`} id={`knowledge-item-${item.id}`}>
       {developerMode && <code className="knowledge-entity-id">条目ID：{item.id}</code>}
       <strong>{item.title}</strong>
       <p>{item.resume}</p>

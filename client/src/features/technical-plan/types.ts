@@ -22,6 +22,7 @@ export interface SaveOutlineRequest {
   reason: SaveOutlineReason;
   idMap?: Record<string, string>;
   affectedNodeIds?: string[];
+  persistWordControlSnapshot?: boolean;
 }
 
 export interface OutlineSelectionItem {

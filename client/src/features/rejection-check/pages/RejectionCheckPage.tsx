@@ -1380,15 +1380,14 @@ function RejectionCheckPage() {
       return;
     }
 
-    if (runOptions.rejectionCheck && (visibleExtractionStatus !== 'success' || !visibleExtractionContent.trim())) {
-      showToast('请先完成无效与废标项解析', 'info');
-      setStep('items');
-      return;
-    }
-
-    if (runOptions.rejectionCheck && !currentRejectionCheckInputSignature) {
-      showToast('检查输入不完整，请确认投标文件和检查项', 'info');
-      return;
+    if (runOptions.rejectionCheck && (visibleExtractionStatus !== 'success' || !visibleExtractionContent.trim() || !currentRejectionCheckInputSignature)) {
+      if (!runOptions.typoCheck && !runOptions.logicCheck && !runOptions.identityCheck) {
+        showToast('请先完成无效与废标项解析', 'info');
+        setStep('items');
+        return;
+      }
+      showToast('废标项解析未完成，本次只检查已启用的其他项', 'info');
+      runOptions = { ...runOptions, rejectionCheck: false };
     }
 
     if (!runOptions.rejectionCheck && !runOptions.typoCheck && !runOptions.logicCheck && !runOptions.identityCheck) {
@@ -1765,7 +1764,13 @@ function RejectionCheckPage() {
     : hasVisibleCheckResult
       ? '重新检查'
       : '开始检查';
-  const rejectionCheckSummaryText = visibleRejectionCheckStatus === 'running'
+  const rejectionExtractionReady = visibleExtractionStatus === 'success' && Boolean(currentRejectionCheckInputSignature);
+  const canStartOtherChecks = draftCheckOptions.typoCheck || draftCheckOptions.logicCheck || draftCheckOptions.identityCheck;
+  const startCheckDisabled = checkRunning || extractionRunning || !bidDocuments.length || (!rejectionExtractionReady && !canStartOtherChecks);
+  const rejectionCheckNeedsExtraction = visibleExtractionStatus !== 'success';
+  const rejectionCheckSummaryText = rejectionCheckNeedsExtraction
+    ? '需先完成废标项解析'
+    : visibleRejectionCheckStatus === 'running'
     ? rejectionCheckResult.progressMessage || 'AI 正在检查投标文件。'
     : visibleRejectionCheckStatus === 'error'
       ? rejectionCheckResult.error || '废标项检查失败，请重新检查。'
@@ -2566,8 +2571,8 @@ function RejectionCheckPage() {
                     renderRejectionFindingGroups(visibleRejectionFindings)
                   ) : (
                     <div className="markdown-empty-state rejection-finding-empty">
-                      <strong>{visibleRejectionCheckStatus === 'success' ? '暂未发现废标项风险' : hasStaleRejectionCheckResult ? '检查输入已变化' : '等待废标项检查'}</strong>
-                      <p>{rejectionCheckSummaryText}</p>
+                      <strong>{visibleRejectionCheckStatus === 'success' ? '暂未发现废标项风险' : rejectionCheckNeedsExtraction ? '需先完成废标项解析' : hasStaleRejectionCheckResult ? '检查输入已变化' : '等待废标项检查'}</strong>
+                      <p>{rejectionCheckNeedsExtraction ? '废标项解析未完成时，仍可检查已启用的暗标、错别字和逻辑项。' : rejectionCheckSummaryText}</p>
                     </div>
                   )}
                 </>
@@ -2633,7 +2638,7 @@ function RejectionCheckPage() {
                   <button type="button" className="secondary-action" onClick={saveCheckOptions}>
                     保存配置
                   </button>
-                  <button type="button" className="primary-action" onClick={startCheckWithOptions} disabled={checkRunning || extractionRunning || !bidDocuments.length || (draftCheckOptions.rejectionCheck && (visibleExtractionStatus !== 'success' || !currentRejectionCheckInputSignature))}>
+                  <button type="button" className="primary-action" onClick={startCheckWithOptions} disabled={startCheckDisabled}>
                     {checkActionLabel}
                   </button>
                 </div>

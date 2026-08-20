@@ -4,6 +4,7 @@ import type { CSSProperties, DragEvent, ReactNode } from 'react';
 import { trackConfigUsage } from '../../../shared/analytics/analytics';
 import { AppDialog, AppSwitch, ProgressBar, useToast } from '../../../shared/ui';
 import type { BackgroundTaskState, OutlineSelectionItem, SaveOutlineRequest, SaveOutlineSelectionRequest, TechnicalPlanWorkflowKind } from '../types';
+import { useKnowledgeSearch } from '../../knowledge-base/hooks/useKnowledgeSearch';
 import type { KnowledgeBaseIndex, KnowledgeDocument } from '../../knowledge-base/types';
 import { OUTLINE_CONTENT_MODE_LABELS } from '../../../shared/types';
 import type { OutlineContentMode, OutlineData, OutlineExpansionMode, OutlineItem, OutlineMode, OutlineWordControlOptions } from '../../../shared/types';
@@ -352,6 +353,7 @@ function OutlineEditPage({
   const [draftStrictSectionWords, setDraftStrictSectionWords] = useState(outlineWordControlOptions.strictSectionWords);
   const [savingOutlineConfig, setSavingOutlineConfig] = useState(false);
   const [knowledgeSearch, setKnowledgeSearch] = useState('');
+  const { hits: knowledgeSearchHits } = useKnowledgeSearch(knowledgeSearch, { limit: 80 });
   const [expandedKnowledgeFolderIds, setExpandedKnowledgeFolderIds] = useState<Set<string>>(new Set());
   const [knowledgeIndex, setKnowledgeIndex] = useState<KnowledgeBaseIndex>(emptyKnowledgeIndex);
   const [loadingKnowledge, setLoadingKnowledge] = useState(false);
@@ -750,11 +752,12 @@ function OutlineEditPage({
           project_overview: outlineData?.project_overview || projectOverview,
         },
         reason: 'replace',
+        persistWordControlSnapshot: true,
       });
       setImportConfirmOpen(false);
       setImportPreviewOpen(false);
       setImportPreview(null);
-      showToast('目录已导入并替换当前目录。字数控制快照可能失效，需要的话请重新生成或重设字数。', 'success');
+      showToast('目录已导入。已按当前字数控制设置重写快照，可直接进入下一步。', 'success');
     } catch (error) {
       showToast(error instanceof Error ? error.message : '保存导入目录失败', 'error');
     }
@@ -1153,11 +1156,13 @@ function OutlineEditPage({
     const selectedDocuments = draftKnowledgeDocumentIds
       .map((documentId) => knowledgeIndex.documents.find((document) => document.id === documentId))
       .filter((document): document is KnowledgeDocument => Boolean(document));
+    const matchedDocumentIds = new Set(knowledgeSearchHits.map((hit) => hit.documentId));
+    const firstHitByDocument = new Map(knowledgeSearchHits.map((hit) => [hit.documentId, hit]));
     const visibleFolders = knowledgeIndex.folders.flatMap((folder) => {
       const folderDocuments = availableDocuments.filter((document) => document.folder_id === folder.id);
       const folderMatched = keyword ? includesKeyword(folder.name, keyword) : false;
       const documents = keyword
-        ? folderDocuments.filter((document) => folderMatched || includesKeyword(document.file_name, keyword))
+        ? folderDocuments.filter((document) => folderMatched || includesKeyword(document.file_name, keyword) || matchedDocumentIds.has(document.id))
         : folderDocuments;
 
       return documents.length ? [{ folder, documents }] : [];
@@ -1176,7 +1181,7 @@ function OutlineEditPage({
             value={knowledgeSearch}
             onChange={(event) => setKnowledgeSearch(event.target.value)}
             disabled={knowledgePickingDisabled}
-            placeholder="搜索文件夹或文档"
+            placeholder="搜索文件夹、文档或知识内容"
           />
           <span>{keyword ? `匹配 ${visibleDocumentCount} 个文档` : `共 ${availableDocuments.length} 个可用文档`}</span>
         </div>
@@ -1219,6 +1224,9 @@ function OutlineEditPage({
                               />
                               <strong title={document.file_name}>{document.file_name}</strong>
                               <small>{document.item_count || 0} 条</small>
+                              {firstHitByDocument.get(document.id)?.snippet ? (
+                                <em className="outline-knowledge-hit-snippet">{firstHitByDocument.get(document.id)?.snippet}</em>
+                              ) : null}
                             </label>
                           );
                         })}

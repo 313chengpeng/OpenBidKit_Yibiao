@@ -1861,7 +1861,7 @@ async function runRejectionCheckTask({ aiService, workspaceStore, updateTask, ch
     ...(payload?.workspaceState || {}),
   };
   const options = state.checkOptions || {};
-  const runOptions = payload?.runOptions || options;
+  let runOptions = payload?.runOptions || options;
   const bidDocuments = Array.isArray(state.bidDocuments) ? state.bidDocuments : [];
   if (typeof workspaceStore.readDocumentMarkdown !== 'function'
     || typeof workspaceStore.createDocumentSignature !== 'function'
@@ -1885,6 +1885,9 @@ async function runRejectionCheckTask({ aiService, workspaceStore, updateTask, ch
   );
   if (!currentBidDocuments.length || !bidSignature) throw new Error('缺少投标文件内容，无法开始检查');
 
+  if (runOptions.rejectionCheck && (!invalidBidAndRejectionItems.trim() || !rejectionInputSignature)) {
+    runOptions = { ...runOptions, rejectionCheck: false };
+  }
   const enabledTasks = [
     runOptions.rejectionCheck ? 'rejection' : '',
     runOptions.typoCheck ? 'typo' : '',
@@ -1892,9 +1895,6 @@ async function runRejectionCheckTask({ aiService, workspaceStore, updateTask, ch
     runOptions.identityCheck ? 'identity' : '',
   ].filter(Boolean);
   if (!enabledTasks.length) throw new Error('请至少启用一种检查');
-  if (runOptions.rejectionCheck && (!invalidBidAndRejectionItems.trim() || !rejectionInputSignature)) {
-    throw new Error('请先完成无效与废标项解析');
-  }
 
   const developerLogger = createRejectionDeveloperLogger(aiService, 'rejection-check-run', {
     bid_signature: bidSignature,

@@ -1224,8 +1224,27 @@
 
 .content-generation-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
+  justify-content: flex-end;
   gap: 10px;
+}
+
+.content-chapter-task-errors {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 6px;
+}
+
+.content-chapter-task-error {
+  margin: 0;
+  padding: 8px 10px;
+  color: var(--yb-danger);
+  background: rgba(220, 38, 38, 0.08);
+  border: 1px solid rgba(220, 38, 38, 0.18);
+  border-radius: var(--yb-radius-md);
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .content-dev-stats-panel {
@@ -3420,6 +3439,15 @@
   display: grid;
   gap: 1px;
   padding: 0 6px 6px;
+}
+
+.outline-knowledge-hit-snippet {
+  grid-column: 1 / -1;
+  color: var(--yb-text-muted);
+  font-size: 11px;
+  font-style: normal;
+  line-height: 1.4;
+  white-space: normal;
 }
 
 .outline-knowledge-document.compact {
