@@ -31,7 +31,7 @@ function loadSelectedKnowledgeText(knowledgeBaseService, documentIds, item) {
   const selectedIds = new Set((Array.isArray(item?.knowledge_item_ids) ? item.knowledge_item_ids : [])
     .map((id) => String(id || '').trim())
     .filter(Boolean));
-  if (!knowledgeBaseService?.readReferences || !Array.isArray(documentIds) || !documentIds.length) {
+  if (!selectedIds.size || !knowledgeBaseService?.readReferences || !Array.isArray(documentIds) || !documentIds.length) {
     return '';
   }
   try {
@@ -42,7 +42,7 @@ function loadSelectedKnowledgeText(knowledgeBaseService, documentIds, item) {
         const itemId = String(knowledgeItem?.id || '').trim();
         const content = String(knowledgeItem?.content || '').trim();
         if (!content) continue;
-        if (!selectedIds.size || selectedIds.has(itemId) || selectedIds.has(`${reference?.document?.id}::${itemId}`)) {
+        if (selectedIds.has(itemId) || selectedIds.has(`${reference?.document?.id}::${itemId}`)) {
           parts.push(content);
         }
       }
@@ -174,5 +174,6 @@ async function runTemplateFillTask({
 }
 
 module.exports = {
+  loadSelectedKnowledgeText,
   runTemplateFillTask,
 };
