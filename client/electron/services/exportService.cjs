@@ -9,6 +9,10 @@ const { getMermaidCacheEntry, saveMermaidCacheImage } = require('../utils/mermai
 const { getGeneratedImagesDir, getImportedImagesDir } = require('../utils/paths.cjs');
 const { REMOTE_IMAGE_RETRY_ATTEMPTS, REMOTE_IMAGE_RETRY_DELAY_MS } = require('../utils/remoteImageRetry.cjs');
 const { renderMarkdownHtml } = require('../utils/renderMarkdownHtml.cjs');
+const {
+  applyTextNormalization,
+  applyTextNormalizationToMarkdown,
+} = require('../utils/textNormalization.cjs');
 const { getLocalImageRenderService } = require('./localImageRenderService.cjs');
 const {
   AlignmentType,
@@ -246,61 +250,6 @@ function formatExportTimestamp(date = new Date()) {
 
 function cleanText(value) {
   return String(value || '').replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '');
-}
-
-function convertChineseQuotes(value) {
-  let result = '';
-  let doubleOpen = true;
-  let singleOpen = true;
-  const text = String(value || '');
-  for (let index = 0; index < text.length; index += 1) {
-    const char = text[index];
-    if (char === '"') {
-      result += doubleOpen ? '“' : '”';
-      doubleOpen = !doubleOpen;
-      continue;
-    }
-    if (char === "'") {
-      const prev = text[index - 1] || '';
-      const next = text[index + 1] || '';
-      if (/[A-Za-z]/.test(prev) && /[A-Za-z]/.test(next)) {
-        result += char;
-        continue;
-      }
-      result += singleOpen ? '‘' : '’';
-      singleOpen = !singleOpen;
-      continue;
-    }
-    result += char;
-  }
-  return result;
-}
-
-function stripChineseSpaces(value) {
-  return String(value || '').replace(/([\u3400-\u9FFF\uF900-\uFAFF])[ \t]+(?=[\u3400-\u9FFF\uF900-\uFAFF])/g, '$1');
-}
-
-function applyTextNormalization(value, options) {
-  if (!options?.chinese_quotes && !options?.strip_spaces) return String(value || '');
-  let text = String(value || '');
-  if (options.chinese_quotes) text = convertChineseQuotes(text);
-  if (options.strip_spaces) text = stripChineseSpaces(text);
-  return text;
-}
-
-function applyTextNormalizationToMarkdown(markdown, options) {
-  if (!options?.chinese_quotes && !options?.strip_spaces) return String(markdown || '');
-  const preserved = [];
-  const protectedText = String(markdown || '')
-    .replace(/```[\s\S]*?```/g, (block) => {
-      preserved.push(block);
-      return `\0FENCE${preserved.length - 1}\0`;
-    })
-    .replace(/`[^`\n]+`/g, (block) => {
-      preserved.push(block);
-      return `\0FENCE${preserved.length - 1}\0`;
-    });
-  return applyTextNormalization(protectedText, options).replace(/\0FENCE(\d+)\0/g, (_, index) => preserved[Number(index)] || '');
 }
 
 function applyOutlineTextNormalization(items, options) {

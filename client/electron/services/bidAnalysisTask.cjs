@@ -165,6 +165,14 @@ function isSelectableBidAnalysisTask(task) {
   return task.id !== 'bidBriefing';
 }
 
+function createIdleBidAnalysisItem(task) {
+  return { id: task.id, label: task.label, status: 'idle', content: '' };
+}
+
+function shouldInvalidateBidBriefing(tasksToRun) {
+  return (Array.isArray(tasksToRun) ? tasksToRun : []).some((task) => task?.id && task.id !== 'bidBriefing');
+}
+
 function getBidAnalysisTasks(mode) {
   const selectable = tasks.filter(isSelectableBidAnalysisTask);
   return mode === 'full' ? selectable : selectable.filter((task) => task.required);
@@ -372,7 +380,7 @@ async function runBidAnalysisTask({ aiService, workspaceStore, updateTask, check
   if (forceRerun && !requestedTaskIds) {
     const resetTasks = {};
     for (const task of selectedTasks) {
-      const resetTask = { id: task.id, label: task.label, status: 'idle', content: '' };
+      const resetTask = createIdleBidAnalysisItem(task);
       currentTasks[task.id] = resetTask;
       resetTasks[task.id] = resetTask;
     }
@@ -398,12 +406,26 @@ async function runBidAnalysisTask({ aiService, workspaceStore, updateTask, check
       },
     };
   }
+  const tasksToRun = requestedTaskIds || forceRerun ? scopedTasks : scopedTasks.filter((task) => currentTasks[task.id]?.status !== 'success');
+  if (shouldInvalidateBidBriefing(tasksToRun)) {
+    const briefingTask = getBidAnalysisTaskById('bidBriefing');
+    if (briefingTask) {
+      const resetBriefing = createIdleBidAnalysisItem(briefingTask);
+      currentTasks[briefingTask.id] = resetBriefing;
+      initialPartial = {
+        ...initialPartial,
+        bidAnalysisTasks: {
+          ...(initialPartial.bidAnalysisTasks || {}),
+          [briefingTask.id]: resetBriefing,
+        },
+      };
+    }
+  }
   checkpointTask(
     { status: 'running', progress: 0, logs: initialLogs },
     initialPartial,
     initialEventPatch,
   );
-  const tasksToRun = requestedTaskIds || forceRerun ? scopedTasks : scopedTasks.filter((task) => currentTasks[task.id]?.status !== 'success');
 
   function checkpointBidItem(taskPartial, item, progress, technicalPlanPatch = {}) {
     checkpointTask(
@@ -507,4 +529,5 @@ module.exports = {
   runBidAnalysisTask,
   runBidAnalysisPromptTask,
   runSingleBidAnalysisPromptTask,
+  shouldInvalidateBidBriefing,
 };

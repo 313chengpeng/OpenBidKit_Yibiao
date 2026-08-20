@@ -8,6 +8,7 @@ const typoExcerptRadius = 8;
 const fullPromptLimitRatio = 0.6;
 const rollingSegmentLimitRatio = 0.55;
 const typoSegmentLimitRatio = 0.7;
+const identitySegmentLimitRatio = 0.55;
 const rollingSummaryEvidenceLimit = 60;
 const rollingSummaryResolvedLimit = 40;
 const rollingSummaryConfirmedLimit = 60;
@@ -1075,6 +1076,32 @@ function dedupeLogicFindings(findings) {
   return limitDedupeItems(findings, Number.MAX_SAFE_INTEGER, (item) => `${item.bidDocumentId}\u0000${item.title}\u0000${item.locationHint}\u0000${item.fallacyReason}`);
 }
 
+function dedupeIdentityFindings(findings) {
+  return limitDedupeItems(findings, Number.MAX_SAFE_INTEGER, (item) => `${item.bidDocumentId}\u0000${item.category}\u0000${item.matchedText}\u0000${item.originalExcerpt}`);
+}
+
+function createIdentityCheckUnits(aiService, documents) {
+  const bidDocuments = Array.isArray(documents) ? documents : [];
+  if (!shouldUseSegmentedBidDocuments(aiService, bidDocuments)) {
+    return [{ bidDocuments }];
+  }
+
+  const config = getCurrentAiConfig(aiService);
+  const units = [];
+  for (const document of bidDocuments) {
+    const segments = createBidDocumentSegments(document, config, identitySegmentLimitRatio);
+    for (const segment of segments) {
+      units.push({
+        bidDocuments: [createSegmentPromptDocument(document, segment)],
+        normalizeDocuments: [document],
+        segmentStartOffset: segment.startOffset,
+        segmentEndOffset: segment.endOffset,
+      });
+    }
+  }
+  return units;
+}
+
 function takeRecentItems(items, limit) {
   const source = Array.isArray(items) ? items : [];
   return source.slice(Math.max(0, source.length - limit));
@@ -1718,7 +1745,7 @@ async function runLogicCheck(aiService, input, onProgress) {
   return normalizeLogicCheckFindings(payload, input.bidDocuments);
 }
 
-async function runIdentityCheckForDocuments(aiService, input, onProgress) {
+async function runIdentityCheckForDocuments(aiService, input, onProgress, normalizeOptions = {}) {
   onProgress('第一轮：正在分析暗标检查范围。');
   const analysis = await runText(
     aiService,
@@ -1740,22 +1767,47 @@ async function runIdentityCheckForDocuments(aiService, input, onProgress) {
     progressLabel: '暗标检查结果',
     failureMessage: '暗标检查结果格式无效，请重新检查',
   }, onProgress, '暗标第三轮定稿');
-  return normalizeIdentityCheckFindings(payload, input.bidDocuments, {
+  return normalizeIdentityCheckFindings(payload, normalizeOptions.bidDocuments || input.bidDocuments, {
     projectIdentifiers: input.projectIdentifiers,
+    segmentStartOffset: normalizeOptions.segmentStartOffset,
+    segmentEndOffset: normalizeOptions.segmentEndOffset,
   });
+}
+
+function getIdentityCheckNormalizeOptions(unit) {
+  return {
+    bidDocuments: unit.normalizeDocuments,
+    segmentStartOffset: unit.segmentStartOffset,
+    segmentEndOffset: unit.segmentEndOffset,
+  };
 }
 
 async function runIdentityCheck(aiService, input, onProgress) {
   const documents = Array.isArray(input.bidDocuments) ? input.bidDocuments : [];
-  if (shouldUseSegmentedBidDocuments(aiService, documents) && documents.length > 1) {
-    const findings = [];
-    for (const [index, document] of documents.entries()) {
-      onProgress(`正在检查第 ${index + 1}/${documents.length} 份投标文件的暗标风险。`);
-      findings.push(...await runIdentityCheckForDocuments(aiService, { ...input, bidDocuments: [document] }, onProgress));
-    }
-    return findings;
+  const units = createIdentityCheckUnits(aiService, documents);
+  if (units.length <= 1) {
+    const unit = units[0] || { bidDocuments: documents };
+    return runIdentityCheckForDocuments(
+      aiService,
+      { ...input, bidDocuments: unit.bidDocuments },
+      onProgress,
+      getIdentityCheckNormalizeOptions(unit),
+    );
   }
-  return runIdentityCheckForDocuments(aiService, input, onProgress);
+
+  const findings = [];
+  onProgress('正在按上下文长度分段检查暗标风险。');
+  for (const [index, unit] of units.entries()) {
+    onProgress(`正在检查暗标风险第 ${index + 1}/${units.length} 段。`);
+    findings.push(...await runIdentityCheckForDocuments(
+      aiService,
+      { ...input, bidDocuments: unit.bidDocuments },
+      onProgress,
+      getIdentityCheckNormalizeOptions(unit),
+    ));
+  }
+  onProgress('正在合并暗标检查结果。');
+  return dedupeIdentityFindings(findings);
 }
 
 function updateExtractionState(checkpointTask, currentExtraction, taskPartial, extractionPartial) {
@@ -2007,4 +2059,9 @@ async function runRejectionCheckTask({ aiService, workspaceStore, updateTask, ch
 module.exports = {
   runRejectionItemsExtractionTask,
   runRejectionCheckTask,
+  _internals: {
+    createIdentityCheckUnits,
+    dedupeIdentityFindings,
+    shouldUseSegmentedBidDocuments,
+  },
 };
