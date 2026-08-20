@@ -311,7 +311,7 @@ function createTask(type, payload) {
   };
 }
 
-function createTaskService({ aiService, agentService, autoConfirmationService, technicalPlanStore, rejectionCheckStore, duplicateCheckStore, feasibilityReportStore, knowledgeBaseService, duplicateCheckService }) {
+function createTaskService({ aiService, agentService, autoConfirmationService, technicalPlanStore, rejectionCheckStore, duplicateCheckStore, feasibilityReportStore, knowledgeBaseService, duplicateCheckService, openXmlHelperService }) {
   const subscribers = new Set();
   const callbackSubscribers = new Set();
   const activeTasks = new Map();
@@ -394,6 +394,7 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
         'globalFactsTask',
         'globalFactsAdjustmentTask',
         'globalFacts',
+        'bidTemplateExists',
       ]);
       if (task.status === 'success' || state.outlineData === null || hasOwn(eventPatch, 'outlineData')) {
         copyPatchFields(patch, state, [
@@ -874,7 +875,7 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
       () => createAgentUserTaskContext(type, definition, payload, currentTask),
       { queueScopeId, signal: taskControl.signal },
     );
-    runner({ aiService: runnerAiService, agentService: runnerAgentService, workspaceStore: runnerWorkspaceStore, knowledgeBaseService, updateTask, checkpointTask, payload, taskControl, previousState }).catch((error) => {
+    runner({ aiService: runnerAiService, agentService: runnerAgentService, workspaceStore: runnerWorkspaceStore, knowledgeBaseService, openXmlHelperService, updateTask, checkpointTask, payload, taskControl, previousState }).catch((error) => {
       if (!taskControl.signal.aborted) {
         checkpointTask({ status: 'error', error: error.message || '任务执行失败' });
       }
@@ -1374,6 +1375,7 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
         outlineExpansionMode: payload?.outline_expansion_mode === 'original-only' ? 'original-only' : 'ai-complement',
         outlineWordControlOptions: payload?.word_control_options,
         referenceKnowledgeDocumentIds: Array.isArray(payload?.reference_knowledge_document_ids) ? payload.reference_knowledge_document_ids : [],
+        bidTemplateExists: false,
         outlineData: null,
         outlineWordControlSnapshot: undefined,
         outlineAdjustmentTask: undefined,
@@ -1386,7 +1388,10 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
         contentIllustrationPlan: undefined,
         contentGenerationRuntime: undefined,
       }, {
-        beforeStart: () => agentService.deletePersistentTask(OUTLINE_AGENT_TASK_KEY),
+        beforeStart: () => {
+          agentService.deletePersistentTask(OUTLINE_AGENT_TASK_KEY);
+          technicalPlanStore.clearBidTemplate();
+        },
       });
     },
     startOutlineAdjustment(payload) {

@@ -1,3 +1,4 @@
+const path = require('node:path');
 const { OUTLINE_AGENT_TASK_KEY } = require('./outlineGenerationAgentV2Config.cjs');
 
 const DEFAULT_ESTIMATED_SECTION_WORDS = 3000;
@@ -10,6 +11,7 @@ const OUTLINE_REVIEW_FILE = 'outline-review.json';
 const OUTLINE_REVIEW_CONTEXT_FILE = 'outline-review-context.json';
 const AI_CONTENT_MODE = 'ai-generate';
 const CONTENT_MODES = ['ai-generate', 'template-fill', 'point-to-point', 'other'];
+const AGENT_TENDER_ORIGINALS_DIR = '招标原件';
 
 function createDirectoryNodeSchema(level, root = false) {
   const baseProperties = {
@@ -521,8 +523,42 @@ function createLeafAllocationPrompt() {
 8. 程序已为 ${LEAF_ALLOCATION_FILE} 预置 Schema。完成后调用 json-validation 校验，只传 file_path；校验失败后必须先修改文件，再重新校验。`;
 }
 
-function createScorePlanningPrompt() {
-  return `用户已经确认最终保留的一级目录，${OUTLINE_OUTPUT_FILE} 已由程序重新整理并编号。工作区也已加入技术评分信息和用户选择的参考资料。
+function formatTenderOriginalPaths(fileNames) {
+  return (Array.isArray(fileNames) ? fileNames : [])
+    .map((name) => String(name || '').trim())
+    .filter(Boolean)
+    .map((name) => `${AGENT_TENDER_ORIGINALS_DIR}/${name}`);
+}
+
+function createTemplateExtractPrompt(tenderOriginalNames = []) {
+  const originalPaths = formatTenderOriginalPaths(tenderOriginalNames);
+  const hasMultipleOriginals = originalPaths.length > 1;
+  const originalList = originalPaths.length
+    ? originalPaths.map((item) => `- ${item}`).join('\n')
+    : `- ${AGENT_TENDER_ORIGINALS_DIR}/`;
+  return `用户已经确认最终保留的一级目录。程序已把确认后的目录写入 ${OUTLINE_OUTPUT_FILE}，并把招标 Word 原件放到 ${AGENT_TENDER_ORIGINALS_DIR}/。
+
+招标原件只有这些文件：
+${originalList}
+
+程序会固定使用清单中的第一份 Word 作为投标模版的全局样式基准。
+
+请根据选中的一级目录，调用 openxml 生成投标文件模版。
+
+要求：
+1. 先只调用一次 openxml，action=list-blocks。不要传 sources，程序会固定读取上面列出的全部 Word 原件。
+2. 用 read 阅读工作区中的 招标原文结构.json；多份原件的块会按 source.path 分组，块号只在各自原件内有效。
+3. 针对 ${OUTLINE_OUTPUT_FILE} 里每一个一级目录，在原文结构中找到对应章节。必须使用招标 Word 里的真实标题或块号，不要用一级目录的改写标题去硬碰原文。
+4. 再只调用一次 openxml，action=extract-chapters，不要传 sources。chapters 每一项必须包含 title（一级目录标题），以及 sourceTitle（原文真实标题）或 startBlock/endBlock（块区间，endBlock 不含）。${hasMultipleOriginals ? '当前有多份 Word 原件，每一项都必须填写 source，并使用 招标原文结构.json 中对应来源的完整 path。' : '程序会固定使用唯一的 Word 原件，source 可以省略。'}
+5. 所有一级目录都必须抽到。对不上就换原文标题或块号重试，不要为此询问用户。
+6. 不要修改 ${OUTLINE_OUTPUT_FILE}。`;
+}
+
+function createScorePlanningPrompt({ templateExtractionSkipped = false } = {}) {
+  const templateInstruction = templateExtractionSkipped
+    ? '程序已跳过投标模版提取，不要判断或补做该步骤，直接执行当前目录规划。'
+    : '';
+  return `用户已经确认最终保留的一级目录，${OUTLINE_OUTPUT_FILE} 已由程序重新整理并编号。工作区也已加入技术评分信息和用户选择的参考资料。${templateInstruction ? `\n${templateInstruction}` : ''}
 
 请完成技术评分项结构化和目录规划：
 1. 阅读 ${OUTLINE_OUTPUT_FILE}、技术评分信息.md，以及存在的原方案.md 和参考知识库目录。
@@ -618,8 +654,32 @@ function createOutlineReviewPrompt({ targetLeafCount, actualLeafCount, allowRoot
 12. 程序已为 ${OUTLINE_OUTPUT_FILE} 和 ${OUTLINE_REVIEW_FILE} 预置 Schema。分别调用 json-validation 校验，只传 file_path；校验失败后必须先修改对应文件，再重新校验。`;
 }
 
+/** 把招标 Word 原件拷进目录生成 Agent 工作区。 */
+function stageTenderOriginalsForAgent(agentService, workspaceStore) {
+  const persistent = agentService.loadPersistentTask(OUTLINE_AGENT_TASK_KEY);
+  const agentWorkspace = persistent?.paths?.workspaceDir;
+  if (!agentWorkspace) {
+    throw new Error('目录生成工作区不存在，请重新生成目录');
+  }
+  const copied = workspaceStore.copyTenderOriginalsToDirectory(path.join(agentWorkspace, AGENT_TENDER_ORIGINALS_DIR));
+  if (!copied.length) {
+    throw new Error('请重新导入招标文件');
+  }
+  return copied;
+}
+
+function buildOpenXmlToolOptions(workspaceStore, openXmlHelperService) {
+  return {
+    openXmlHelperService,
+    listBusinessSources: () => workspaceStore.listTenderSourceDocxRelativePaths(),
+    resolveAgentSources: (hint) => workspaceStore.resolveTenderSourceDocxPath(hint),
+    bidTemplatePath: workspaceStore.getBidTemplatePath(),
+    bidTemplateRelativePath: workspaceStore.getBidTemplateRelativePath(),
+  };
+}
+
 // 运行 V2 目录业务任务；完整 Agent 执行之间通过程序确认衔接并复用同一持久 Session。
-async function runOutlineGenerationTaskV2({ agentService, workspaceStore, knowledgeBaseService, updateTask, checkpointTask, taskControl, payload }) {
+async function runOutlineGenerationTaskV2({ agentService, workspaceStore, knowledgeBaseService, openXmlHelperService, updateTask, checkpointTask, taskControl, payload }) {
   const storedPlan = workspaceStore.loadTechnicalPlan() || {};
   const restoringOutlineSelection = payload?.agent_resume?.phase === 'outline-selection';
   const hasOriginalPlan = Boolean(storedPlan.originalPlanFile);
@@ -827,36 +887,81 @@ async function runOutlineGenerationTaskV2({ agentService, workspaceStore, knowle
 
   const confirmed = await taskControl.waitForOutlineSelection();
   applyConfirmedSelection(confirmed);
-  publish('一级目录已确认，正在识别技术方案目录', 40);
+  const hasTenderWordOriginals = workspaceStore.listTenderSourceDocxRelativePaths().length > 0;
+  let initialStage;
+  let initialStageIndex;
+  let agentPrompt;
+  let agentFiles;
+  let openXmlTool;
+
+  if (hasTenderWordOriginals) {
+    const tenderOriginalNames = stageTenderOriginalsForAgent(agentService, workspaceStore);
+    initialStage = 'template-extract';
+    initialStageIndex = 1;
+    agentPrompt = createTemplateExtractPrompt(tenderOriginalNames);
+    agentFiles = [
+      { path: OUTLINE_OUTPUT_FILE, content: JSON.stringify({ outline: lockedRoots }, null, 2) },
+    ];
+    openXmlTool = buildOpenXmlToolOptions(workspaceStore, openXmlHelperService);
+    publish('一级目录已确认，正在提取投标模版', 35);
+  } else {
+    initialStage = 'score-planning';
+    initialStageIndex = 2;
+    agentPrompt = createScorePlanningPrompt({ templateExtractionSkipped: true });
+    agentFiles = [
+      { path: OUTLINE_OUTPUT_FILE, content: JSON.stringify({ outline: lockedRoots }, null, 2) },
+      { path: '技术评分信息.md', content: storedPlan.techRequirements || '' },
+      ...knowledgeFiles,
+    ];
+    checkpointTask({}, { bidTemplateExists: false });
+    publish('一级目录已确认，已跳过投标模版提取，正在识别技术方案目录', 40);
+  }
+
+  updateAgentState({ status: 'running', phase: initialStage, agent_connection: 'idle' });
   agentService.updatePersistentTask(OUTLINE_AGENT_TASK_KEY, {
     status: 'running',
-    phase: 'score-planning',
+    phase: initialStage,
     agent_connection: 'idle',
   });
-  updateAgentState({ status: 'running', phase: 'score-planning', agent_connection: 'idle' });
 
   const agentResult = await agentService.runTask({
     task_id: task.task_id,
     title: '技术方案目录生成 V2',
-    prompt: createScorePlanningPrompt(),
+    prompt: agentPrompt,
     output_file: OUTLINE_OUTPUT_FILE,
-    files: [
-      { path: OUTLINE_OUTPUT_FILE, content: JSON.stringify({ outline: lockedRoots }, null, 2) },
-      { path: '技术评分信息.md', content: storedPlan.techRequirements || '' },
-      ...knowledgeFiles,
-    ],
+    files: agentFiles,
     signal: taskControl.signal,
     persistent_task: {
       task_key: OUTLINE_AGENT_TASK_KEY,
       mode: 'resume',
     },
-    initial_stage: 'score-planning',
-    initial_stage_index: 1,
+    initial_stage: initialStage,
+    initial_stage_index: initialStageIndex,
     json_validation_schemas: jsonValidationSchemas,
+    open_xml_tool: openXmlTool,
     max_retries: 0,
     onActivity: publishAgentActivity,
     onCheckpoint: syncAgentCheckpoint,
     continueTask: async (candidate, meta) => {
+      if (meta.workflow_stage === 'template-extract') {
+        if (!workspaceStore.hasBidTemplate()) {
+          throw new Error('尚未生成投标模版，请先调用 openxml 提取并生成模版');
+        }
+        checkpointTask({}, { bidTemplateExists: true });
+        publish('投标模版已生成，正在识别技术方案目录', 40);
+        return {
+          stage: 'score-planning',
+          stage_index: 2,
+          message: 'Agent 正在识别技术方案目录',
+          prompt: createScorePlanningPrompt(),
+          files: [
+            { path: OUTLINE_OUTPUT_FILE, content: JSON.stringify({ outline: lockedRoots }, null, 2) },
+            { path: '技术评分信息.md', content: storedPlan.techRequirements || '' },
+            ...knowledgeFiles,
+          ],
+        };
+      }
+
       if (meta.workflow_stage === 'outline_review') {
         const reviewedOutline = readJson(candidate.output_content, OUTLINE_OUTPUT_FILE);
         const normalizedReviewedOutline = buildFinalOutline(reviewedOutline);
@@ -893,7 +998,7 @@ async function runOutlineGenerationTaskV2({ agentService, workspaceStore, knowle
         return { complete: true };
       }
 
-      if (meta.stage === 1) {
+      if (meta.workflow_stage === 'score-planning') {
         scoreDirectoryPlan = readJson(await meta.readFile(SCORE_DIRECTORY_PLAN_FILE), SCORE_DIRECTORY_PLAN_FILE);
         lockedRoots = attachBranchIdsToRoots(lockedRoots, scoreDirectoryPlan);
         technicalBranches = scoreDirectoryPlan.branches.map((branch) => ({

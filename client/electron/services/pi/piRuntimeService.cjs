@@ -775,6 +775,7 @@ function createPiRuntimeService({ app, configStore, aiService, isMonitorActive, 
         timeoutMs: DEFAULT_PI_HTTP_IDLE_TIMEOUT_MS,
         jsonValidationSchemas: payload.json_validation_schemas,
         requestUserQuestion: (request, signal) => waitForUserQuestion(request, signal, taskToken),
+        openXmlTool: payload.open_xml_tool,
       });
       session = created.session;
       sessionSnapshot = created.snapshot;
