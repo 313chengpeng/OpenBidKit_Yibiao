@@ -873,7 +873,11 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
     const runnerAiService = aiService?.withQueueScope ? aiService.withQueueScope(queueScopeId, taskControl.signal) : aiService;
     const runnerAgentService = agentService.bindTaskContext(
       () => createAgentUserTaskContext(type, definition, payload, currentTask),
-      { queueScopeId, signal: taskControl.signal },
+      {
+        queueScopeId,
+        signal: taskControl.signal,
+        primary_session: startOptions.primarySession === true,
+      },
     );
     runner({ aiService: runnerAiService, agentService: runnerAgentService, workspaceStore: runnerWorkspaceStore, knowledgeBaseService, openXmlHelperService, updateTask, checkpointTask, payload, taskControl, previousState }).catch((error) => {
       if (!taskControl.signal.aborted) {
@@ -1017,6 +1021,7 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
         existingTask: outlineTask,
         skipInitialStateUpdate: true,
         restoreOutlineSelectionWaiter: true,
+        primarySession: agentService.isPrimarySession({ task_key: OUTLINE_AGENT_TASK_KEY }),
       });
       return;
     }
@@ -1388,6 +1393,7 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
         contentIllustrationPlan: undefined,
         contentGenerationRuntime: undefined,
       }, {
+        primarySession: true,
         beforeStart: () => {
           agentService.deletePersistentTask(OUTLINE_AGENT_TASK_KEY);
           technicalPlanStore.clearBidTemplate();
@@ -1395,7 +1401,9 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
       });
     },
     startOutlineAdjustment(payload) {
-      return startManagedTask('outline-adjustment', payload, runOutlineAdjustmentTask);
+      return startManagedTask('outline-adjustment', payload, runOutlineAdjustmentTask, {}, {
+        primarySession: agentService.isPrimarySession({ task_key: OUTLINE_AGENT_TASK_KEY }),
+      });
     },
     startGlobalFactsGeneration(payload) {
       return startManagedTask('global-facts-generation', payload, runGlobalFactsTaskV2, {
@@ -1408,11 +1416,14 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
         contentIllustrationPlan: undefined,
         contentGenerationRuntime: undefined,
       }, {
+        primarySession: true,
         beforeStart: () => agentService.deletePersistentTask(GLOBAL_FACTS_AGENT_TASK_KEY),
       });
     },
     startGlobalFactsAdjustment(payload) {
-      return startManagedTask('global-facts-adjustment', payload, runGlobalFactsAdjustmentTask);
+      return startManagedTask('global-facts-adjustment', payload, runGlobalFactsAdjustmentTask, {}, {
+        primarySession: agentService.isPrimarySession({ task_key: GLOBAL_FACTS_AGENT_TASK_KEY }),
+      });
     },
     startContentGeneration(payload) {
       const technicalPlan = technicalPlanStore.loadTechnicalPlan();
@@ -1492,11 +1503,14 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
         contentTask: null,
         humanWritingTask: null,
       }, {
+        primarySession: true,
         beforeStart: () => agentService.deletePersistentTask(FEASIBILITY_OUTLINE_AGENT_TASK_KEY),
       });
     },
     startFeasibilityOutlineAdjustment(payload) {
-      return startManagedTask('feasibility-outline-adjustment', payload, runFeasibilityOutlineAdjustmentTask);
+      return startManagedTask('feasibility-outline-adjustment', payload, runFeasibilityOutlineAdjustmentTask, {}, {
+        primarySession: agentService.isPrimarySession({ task_key: FEASIBILITY_OUTLINE_AGENT_TASK_KEY }),
+      });
     },
     startFeasibilityParameters(payload) {
       return startManagedTask('feasibility-parameters', payload, runFeasibilityParametersTask, {
