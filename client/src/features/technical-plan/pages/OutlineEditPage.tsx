@@ -77,12 +77,12 @@ const technicalDocumentModeOptions: Array<{ value: Extract<OutlineMode, 'respons
   {
     value: 'response-file',
     title: '完整投标文件结构',
-    description: '保留技术方案或监理大纲等外层章节，便于后续继续组织商务、资信等完整投标文件。',
+    description: '保留技术方案、项目管理方案、监理大纲、施工组织设计或技术标等外层章节，便于组织完整投标文件。',
   },
   {
     value: 'standalone-technical',
-    title: '技术方案独立成册',
-    description: '一级目录直接从技术评分大项开始，不再创建技术方案、监理大纲等外层总目录。',
+    title: '技术文件独立成册',
+    description: '一级目录直接从技术评分大项开始，不再创建技术方案、项目管理方案、监理大纲、施工组织设计或技术标等外层总目录。',
   },
 ];
 
