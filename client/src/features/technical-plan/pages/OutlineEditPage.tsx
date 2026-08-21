@@ -439,6 +439,7 @@ function OutlineEditPage({
     strictSectionWords: parsedDraftSectionWords > 0 && draftStrictSectionWords,
   };
   const wordControlRequiresRegeneration = Boolean(outlineData && !areWordControlOptionsEqual(normalizedDraftOptions, outlineWordControlSnapshot));
+  const outlineModeRequiresRegeneration = Boolean(outlineData && !isExpansionWorkflow && draftOutlineMode !== outlineMode);
 
   const initializeWordControlDraft = () => {
     setDraftMinimumWords(formatWordCountDraft(outlineWordControlOptions.minimumWords));
@@ -577,6 +578,10 @@ function OutlineEditPage({
   };
 
   const saveOutlineConfig = async () => {
+    if (outlineModeRequiresRegeneration) {
+      showToast('技术文件结构已改变，请点击“重新生成目录”使新结构生效', 'info');
+      return;
+    }
     try {
       const wordControlOptions = getNormalizedWordControlOptions();
       setSavingOutlineConfig(true);
@@ -1084,6 +1089,11 @@ function OutlineEditPage({
             );
           })}
         </div>
+        {outlineModeRequiresRegeneration && (
+          <div className="outline-word-control-notice">
+            技术文件结构已改变，需要重新生成目录后才能生效！
+          </div>
+        )}
       </section>
     );
   };
