@@ -5,6 +5,7 @@ const {
   createInitialPrompt,
   createScorePlanningPrompt,
   createChildrenPrompt,
+  enforceMinimumLeafTarget,
 } = require('./outlineGenerationTaskV2.cjs');
 
 test('独立成册模式直接以技术评分大项作为一级目录', () => {
@@ -35,4 +36,11 @@ test('独立成册生成子目录时不重复评分项根标题', () => {
   assert.match(prompt, /现有一级根节点本身就是评分项映射节点/);
   assert.match(prompt, /不得在根节点下面再次生成同名评分项/);
   assert.doesNotMatch(prompt, /"title":"技术方案"/);
+});
+
+test('独立成册末级小节目标满足每个技术分支至少两个', () => {
+  assert.equal(enforceMinimumLeafTarget(10, 0, 6), 12);
+  assert.equal(enforceMinimumLeafTarget(14, 0, 6), 14);
+  assert.equal(enforceMinimumLeafTarget(10, 2, 5), 12);
+  assert.equal(enforceMinimumLeafTarget(null, 0, 6), null);
 });

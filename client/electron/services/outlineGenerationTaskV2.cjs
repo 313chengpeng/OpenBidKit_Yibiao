@@ -264,6 +264,11 @@ function deriveTargetLeafCount(options) {
   return null;
 }
 
+function enforceMinimumLeafTarget(targetLeafCount, fixedAiLeafCount, technicalBranchCount) {
+  if (targetLeafCount === null) return null;
+  return Math.max(targetLeafCount, fixedAiLeafCount + technicalBranchCount * 2);
+}
+
 // 统一目录层级编号，并按父子节点形态整理目录字段。
 function renumberOutline(items, prefix = '') {
   return (items || []).map((item, index) => {
@@ -709,7 +714,7 @@ async function runOutlineGenerationTaskV2({ agentService, workspaceStore, knowle
   const originalPlan = hasOriginalPlan ? workspaceStore.readOriginalPlanMarkdown() : '';
   const responseFileRequirements = storedPlan.bidAnalysisTasks?.responseFileRequirements?.content || '';
   const wordControlOptions = normalizeWordControlOptions(payload?.word_control_options || storedPlan.outlineWordControlOptions);
-  const targetLeafCount = deriveTargetLeafCount(wordControlOptions);
+  let targetLeafCount = deriveTargetLeafCount(wordControlOptions);
   const referenceDocumentIds = normalizeReferenceDocumentIds(storedPlan);
   const knowledgeFiles = buildKnowledgeFiles(knowledgeBaseService, referenceDocumentIds);
   const jsonValidationSchemas = {
@@ -1034,6 +1039,17 @@ async function runOutlineGenerationTaskV2({ agentService, workspaceStore, knowle
         allowRootChanges = scoreDirectoryPlan.allow_root_changes === true;
         fixedAiLeafCount = lockedRoots
           .filter((root) => !root.branch_id && root.content_mode === AI_CONTENT_MODE).length;
+        if (standaloneTechnical) {
+          const requestedLeafTarget = targetLeafCount;
+          targetLeafCount = enforceMinimumLeafTarget(
+            targetLeafCount,
+            fixedAiLeafCount,
+            technicalBranches.length,
+          );
+          if (requestedLeafTarget !== null && targetLeafCount !== requestedLeafTarget) {
+            publish(`独立成册目录至少需要 ${targetLeafCount} 个 AI 生成小节，已自动校正原目标 ${requestedLeafTarget}`, 50);
+          }
+        }
         allocatedAiLeafCount = targetLeafCount === null ? null : targetLeafCount - fixedAiLeafCount;
         if (allocatedAiLeafCount !== null && technicalBranches.length > 1) {
           publish('技术方案目录已确认，Agent 正在分配 AI 生成小节', 50);
@@ -1156,4 +1172,5 @@ module.exports = {
   createInitialPrompt,
   createScorePlanningPrompt,
   createChildrenPrompt,
+  enforceMinimumLeafTarget,
 };
