@@ -1,10 +1,9 @@
 import * as Dialog from '@radix-ui/react-dialog';
 import { useEffect, useRef, useState } from 'react';
-import type { CSSProperties, DragEvent, ReactNode } from 'react';
+import type { CSSProperties, DragEvent } from 'react';
 import { trackConfigUsage } from '../../../shared/analytics/analytics';
-import { AppDialog, AppSwitch, ProgressBar, useToast } from '../../../shared/ui';
+import { AppSwitch, ProgressBar, useToast } from '../../../shared/ui';
 import type { BackgroundTaskState, OutlineSelectionItem, SaveOutlineRequest, SaveOutlineSelectionRequest, TechnicalPlanWorkflowKind } from '../types';
-import { useKnowledgeSearch } from '../../knowledge-base/hooks/useKnowledgeSearch';
 import type { KnowledgeBaseIndex, KnowledgeDocument } from '../../knowledge-base/types';
 import { OUTLINE_CONTENT_MODE_LABELS } from '../../../shared/types';
 import type { OutlineContentMode, OutlineData, OutlineExpansionMode, OutlineItem, OutlineMode, OutlineWordControlOptions } from '../../../shared/types';
@@ -353,7 +352,6 @@ function OutlineEditPage({
   const [draftStrictSectionWords, setDraftStrictSectionWords] = useState(outlineWordControlOptions.strictSectionWords);
   const [savingOutlineConfig, setSavingOutlineConfig] = useState(false);
   const [knowledgeSearch, setKnowledgeSearch] = useState('');
-  const { hits: knowledgeSearchHits } = useKnowledgeSearch(knowledgeSearch, { limit: 80 });
   const [expandedKnowledgeFolderIds, setExpandedKnowledgeFolderIds] = useState<Set<string>>(new Set());
   const [knowledgeIndex, setKnowledgeIndex] = useState<KnowledgeBaseIndex>(emptyKnowledgeIndex);
   const [loadingKnowledge, setLoadingKnowledge] = useState(false);
@@ -368,15 +366,6 @@ function OutlineEditPage({
   const [savingOutlineSelection, setSavingOutlineSelection] = useState(false);
   const [draggingItemId, setDraggingItemId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<DropTargetState | null>(null);
-  const [importingOutline, setImportingOutline] = useState(false);
-  const [importPreviewOpen, setImportPreviewOpen] = useState(false);
-  const [importConfirmOpen, setImportConfirmOpen] = useState(false);
-  const [importPreview, setImportPreview] = useState<{
-    fileName?: string;
-    outline: OutlineItem[];
-    warnings: string[];
-    truncated?: boolean;
-  } | null>(null);
   const logListRef = useRef<HTMLDivElement | null>(null);
   const sortIdMapRef = useRef<Record<string, string>>({});
   const shownTaskErrorIdRef = useRef<string | null>(null);
@@ -701,77 +690,9 @@ function OutlineEditPage({
 
   const getMutationLockMessage = () => {
     if (generating) return '目录生成任务正在运行，当前目录暂不可编辑';
-    if (contentMutationLocked) return '正文或模板任务正在运行或暂停中，请结束后再调整目录';
+    if (contentMutationLocked) return '正文生成任务正在运行或暂停中，请结束后再调整目录';
     return '';
   };
-
-  const collectFilePaths = (files: FileList | File[] | null) => Array.from(files || [])
-    .map((file) => window.yibiao?.file.getPathForFile(file) || '')
-    .filter(Boolean);
-
-  const previewImportedOutline = async (filePaths?: string[]) => {
-    const lockMessage = getMutationLockMessage();
-    if (lockMessage) {
-      showToast(lockMessage, 'info');
-      return;
-    }
-    try {
-      setImportingOutline(true);
-      const result = await window.yibiao?.technicalPlan.importOutlineDocument(filePaths);
-      if (result?.canceled) return;
-      if (!result?.success || !result.outline?.length) {
-        showToast(result?.message || '没有识别到可用标题', 'error');
-        return;
-      }
-      setImportPreview({
-        fileName: result.fileName,
-        outline: result.outline,
-        warnings: result.warnings || [],
-        truncated: result.truncated,
-      });
-      setImportPreviewOpen(true);
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : '导入目录失败', 'error');
-    } finally {
-      setImportingOutline(false);
-    }
-  };
-
-  const confirmImportedOutline = async () => {
-    if (!importPreview?.outline.length) return;
-    const lockMessage = getMutationLockMessage();
-    if (lockMessage) {
-      showToast(lockMessage, 'info');
-      return;
-    }
-    try {
-      await onOutlineSaved({
-        outlineData: {
-          outline: importPreview.outline,
-          project_name: outlineData?.project_name,
-          project_overview: outlineData?.project_overview || projectOverview,
-        },
-        reason: 'replace',
-        persistWordControlSnapshot: true,
-      });
-      setImportConfirmOpen(false);
-      setImportPreviewOpen(false);
-      setImportPreview(null);
-      showToast('目录已导入。已按当前字数控制设置重写快照，可直接进入下一步。', 'success');
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : '保存导入目录失败', 'error');
-    }
-  };
-
-  const renderImportPreviewTree = (items: OutlineItem[], level = 0): ReactNode => items.map((item) => (
-    <div className="outline-import-preview-node" key={item.id} style={{ paddingLeft: `${level * 16}px` }}>
-      <strong>{item.id} {item.title}</strong>
-      {!item.children?.length && item.content_mode ? (
-        <em>{OUTLINE_CONTENT_MODE_LABELS[item.content_mode]}</em>
-      ) : null}
-      {item.children?.length ? renderImportPreviewTree(item.children, level + 1) : null}
-    </div>
-  ));
 
   const saveOutlineChange = async (outline: OutlineItem[], reason: SaveOutlineRequest['reason'], affectedNodeIds: string[] = []) => {
     if (!outlineData) {
@@ -1156,13 +1077,11 @@ function OutlineEditPage({
     const selectedDocuments = draftKnowledgeDocumentIds
       .map((documentId) => knowledgeIndex.documents.find((document) => document.id === documentId))
       .filter((document): document is KnowledgeDocument => Boolean(document));
-    const matchedDocumentIds = new Set(knowledgeSearchHits.map((hit) => hit.documentId));
-    const firstHitByDocument = new Map(knowledgeSearchHits.map((hit) => [hit.documentId, hit]));
     const visibleFolders = knowledgeIndex.folders.flatMap((folder) => {
       const folderDocuments = availableDocuments.filter((document) => document.folder_id === folder.id);
       const folderMatched = keyword ? includesKeyword(folder.name, keyword) : false;
       const documents = keyword
-        ? folderDocuments.filter((document) => folderMatched || includesKeyword(document.file_name, keyword) || matchedDocumentIds.has(document.id))
+        ? folderDocuments.filter((document) => folderMatched || includesKeyword(document.file_name, keyword))
         : folderDocuments;
 
       return documents.length ? [{ folder, documents }] : [];
@@ -1181,7 +1100,7 @@ function OutlineEditPage({
             value={knowledgeSearch}
             onChange={(event) => setKnowledgeSearch(event.target.value)}
             disabled={knowledgePickingDisabled}
-            placeholder="搜索文件夹、文档或知识内容"
+            placeholder="搜索文件夹或文档"
           />
           <span>{keyword ? `匹配 ${visibleDocumentCount} 个文档` : `共 ${availableDocuments.length} 个可用文档`}</span>
         </div>
@@ -1224,9 +1143,6 @@ function OutlineEditPage({
                               />
                               <strong title={document.file_name}>{document.file_name}</strong>
                               <small>{document.item_count || 0} 条</small>
-                              {firstHitByDocument.get(document.id)?.snippet ? (
-                                <em className="outline-knowledge-hit-snippet">{firstHitByDocument.get(document.id)?.snippet}</em>
-                              ) : null}
                             </label>
                           );
                         })}
@@ -1274,22 +1190,6 @@ function OutlineEditPage({
               确认一级目录
             </button>
           )}
-          <button
-            type="button"
-            className="secondary-action"
-            onClick={() => { void previewImportedOutline(); }}
-            disabled={generating || sorting || contentMutationLocked || importingOutline}
-            onDragOver={(event: DragEvent<HTMLButtonElement>) => {
-              event.preventDefault();
-            }}
-            onDrop={(event: DragEvent<HTMLButtonElement>) => {
-              event.preventDefault();
-              const paths = collectFilePaths(event.dataTransfer.files);
-              if (paths.length) void previewImportedOutline(paths);
-            }}
-          >
-            {importingOutline ? '正在识别目录' : '导入目录'}
-          </button>
           <button
             type="button"
             className="outline-config-action"
@@ -1572,47 +1472,6 @@ function OutlineEditPage({
           </Dialog.Content>
         </Dialog.Portal>
       </Dialog.Root>
-
-      <AppDialog
-        open={importPreviewOpen}
-        onOpenChange={(open) => {
-          setImportPreviewOpen(open);
-          if (!open) setImportPreview(null);
-        }}
-        kicker="导入目录"
-        title={importPreview?.fileName ? `预览 ${importPreview.fileName}` : '预览导入目录'}
-        description="确认后将整树替换当前目录，并清空已有正文。不会自动重新生成 AI 目录。"
-        cardClassName="outline-import-preview-card"
-        actions={(
-          <>
-            <button type="button" className="secondary-action" onClick={() => { setImportPreviewOpen(false); setImportPreview(null); }}>取消</button>
-            <button type="button" className="primary-action" onClick={() => setImportConfirmOpen(true)} disabled={!importPreview?.outline.length}>下一步</button>
-          </>
-        )}
-      >
-        {importPreview?.warnings.length ? (
-          <div className="outline-import-preview-warnings">
-            {importPreview.warnings.map((warning) => <p key={warning}>{warning}</p>)}
-          </div>
-        ) : null}
-        <div className="outline-import-preview-tree">
-          {importPreview?.outline.length ? renderImportPreviewTree(importPreview.outline) : <p>没有可预览的目录</p>}
-        </div>
-      </AppDialog>
-
-      <AppDialog
-        open={importConfirmOpen}
-        onOpenChange={setImportConfirmOpen}
-        kicker="替换确认"
-        title="用导入目录替换当前目录？"
-        description="当前目录和已生成正文都会被清空。字数控制快照可能失效，需要的话请之后重新生成或重设字数。"
-        actions={(
-          <>
-            <button type="button" className="secondary-action" onClick={() => setImportConfirmOpen(false)}>返回预览</button>
-            <button type="button" className="primary-action" onClick={() => { void confirmImportedOutline(); }}>确认替换</button>
-          </>
-        )}
-      />
     </div>
   );
 }

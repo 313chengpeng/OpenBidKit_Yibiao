@@ -2,8 +2,6 @@ const crypto = require('node:crypto');
 const { runBidSectionExtractionTask } = require('./bidSectionExtractionTask.cjs');
 const { runBidAnalysisTask } = require('./bidAnalysisTask.cjs');
 const { runContentGenerationTask } = require('./contentGenerationTask.cjs');
-const { runTemplateFillTask } = require('./templateFillTask.cjs');
-const { runPointToPointTask } = require('./pointToPointTask.cjs');
 const { runGlobalFactsTaskV2 } = require('./globalFactsTaskV2.cjs');
 const { runOutlineGenerationTaskV2 } = require('./outlineGenerationTaskV2.cjs');
 const { runOutlineAdjustmentTask } = require('./outlineAdjustmentTask.cjs');
@@ -87,24 +85,6 @@ const taskDefinitions = {
     lockPolicy: 'group-exclusive',
     stateKey: 'technicalPlan',
     field: 'contentGenerationTask',
-  },
-  'template-fill-generation': {
-    label: '模板填写',
-    group: 'technical-plan',
-    groupLabel: '技术方案',
-    step: 5,
-    lockPolicy: 'group-exclusive',
-    stateKey: 'technicalPlan',
-    field: 'templateFillTask',
-  },
-  'point-to-point-generation': {
-    label: '点对点应答表',
-    group: 'technical-plan',
-    groupLabel: '技术方案',
-    step: 5,
-    lockPolicy: 'group-exclusive',
-    stateKey: 'technicalPlan',
-    field: 'pointToPointTask',
   },
   'rejection-items-extraction': {
     label: '无效与废标项解析',
@@ -465,10 +445,6 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
       }
     }
 
-    if (task.type === 'template-fill-generation' || task.type === 'point-to-point-generation') {
-      copyPatchFields(patch, state, ['outlineData', 'contentGenerationSections']);
-    }
-
     if (hasOwn(eventPatch, 'outlineData')) {
       patch.outlineData = eventPatch.outlineData;
     }
@@ -610,14 +586,6 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
             return;
           }
           throw new Error('正文生成已暂停，请先继续当前正文生成任务或重置技术方案后再启动新的任务。');
-        }
-        const pausedTemplateTask = technicalPlan.templateFillTask;
-        if (pausedTemplateTask?.status === 'paused' && type !== 'template-fill-generation') {
-          throw new Error('模板填写已暂停，请先完成或重置后再启动新的任务。');
-        }
-        const pausedPointToPointTask = technicalPlan.pointToPointTask;
-        if (pausedPointToPointTask?.status === 'paused' && type !== 'point-to-point-generation') {
-          throw new Error('点对点应答表已暂停，请先完成或重置后再启动新的任务。');
         }
       }
       if (definition.group === 'feasibility-report' && feasibilityReportStore) {
@@ -1136,29 +1104,6 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
     emit(recoveredTask, buildSnapshot(getTaskDefinition('global-facts-adjustment'), partial, recoveredTask));
   }
 
-  function recoverInterruptedChapterModeTask(technicalPlan, type, field, message) {
-    if (activeTasks.has(type)) {
-      return;
-    }
-    const task = technicalPlan[field];
-    if (!isActiveTaskStatus(task?.status)) {
-      return;
-    }
-    const logs = Array.isArray(task.logs) ? task.logs : [];
-    const recoveredTask = {
-      ...task,
-      status: 'error',
-      progress: 100,
-      pause_requested: false,
-      error: message,
-      logs: logs.includes(message) ? logs : [...logs, message],
-      updated_at: now(),
-    };
-    const partial = { [field]: recoveredTask };
-    technicalPlanStore.updateTechnicalPlanWithoutReload(partial);
-    emit(recoveredTask, buildSnapshot(getTaskDefinition(type), partial, recoveredTask));
-  }
-
   function recoverInterruptedBidAnalysisTask(technicalPlan) {
     if (activeTasks.has('bid-analysis')) {
       return;
@@ -1382,8 +1327,6 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
   recoverInterruptedOutlineGenerationTask(technicalPlanRecoveryState);
   recoverInterruptedOutlineAdjustmentTask(technicalPlanRecoveryState);
   recoverInterruptedContentGenerationTask(technicalPlanRecoveryState);
-  recoverInterruptedChapterModeTask(technicalPlanRecoveryState, 'template-fill-generation', 'templateFillTask', '上次模板填写未完成，请重新填充。');
-  recoverInterruptedChapterModeTask(technicalPlanRecoveryState, 'point-to-point-generation', 'pointToPointTask', '上次点对点应答表未完成，请重新生成。');
   recoverInterruptedGlobalFactsTask(technicalPlanRecoveryState);
   recoverInterruptedGlobalFactsAdjustmentTask(technicalPlanRecoveryState);
   recoverInterruptedRejectionCheckTasks(rejectionCheckRecoveryState);
@@ -1472,12 +1415,6 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
         throw new Error('当前目录没有字数控制生效快照，请重新生成目录');
       }
       return startManagedTask('content-generation', payload, runContentGenerationTask);
-    },
-    startTemplateFill(payload) {
-      return startManagedTask('template-fill-generation', payload, runTemplateFillTask);
-    },
-    startPointToPoint(payload) {
-      return startManagedTask('point-to-point-generation', payload, runPointToPointTask);
     },
     pauseContentGeneration() {
       const task = activeTasks.get('content-generation');

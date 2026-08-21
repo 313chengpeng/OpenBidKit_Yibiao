@@ -8,7 +8,6 @@ const typoExcerptRadius = 8;
 const fullPromptLimitRatio = 0.6;
 const rollingSegmentLimitRatio = 0.55;
 const typoSegmentLimitRatio = 0.7;
-const identitySegmentLimitRatio = 0.55;
 const rollingSummaryEvidenceLimit = 60;
 const rollingSummaryResolvedLimit = 40;
 const rollingSummaryConfirmedLimit = 60;
@@ -234,230 +233,6 @@ JSON 格式：{"findings":[{"bidDocumentId":"对应投标文件的 bidDocumentId
 
 仅输出 JSON，不要输出 Markdown、代码块或解释。` },
   ];
-}
-
-const identityCategoryLabels = {
-  person: '人名或简称',
-  org: '单位名称',
-  project: '项目或编号',
-  contact: '联系方式',
-  region: '地区名称',
-  english: '英文或单位',
-  punctuation: '英文标点或符号',
-  custom: '补充词',
-};
-
-const identityCategories = Object.keys(identityCategoryLabels);
-
-function extractProjectIdentifiers(tenderContent) {
-  const text = String(tenderContent || '');
-  const values = new Set();
-  const patterns = [
-    /项目名称[:：]\s*([^\n。；;]{2,80})/g,
-    /工程名称[:：]\s*([^\n。；;]{2,80})/g,
-    /项目编号[:：]\s*([^\n。；;]{2,40})/g,
-    /招标编号[:：]\s*([^\n。；;]{2,40})/g,
-    /标段(?:编号|名称)?[:：]\s*([^\n。；;]{2,40})/g,
-  ];
-  for (const pattern of patterns) {
-    let match = pattern.exec(text);
-    while (match) {
-      const value = normalizeText(match[1]).replace(/[“”"']/g, '');
-      if (value) values.add(value);
-      match = pattern.exec(text);
-    }
-  }
-  return Array.from(values);
-}
-
-function parseIdentityExtraKeywords(value) {
-  return String(value || '')
-    .split(/\r?\n/)
-    .map((item) => item.replace(/^[-*]\s*/, '').trim())
-    .filter(Boolean);
-}
-
-function buildIdentityCheckCommonMessages(input) {
-  const projectIdentifiers = Array.isArray(input.projectIdentifiers) ? input.projectIdentifiers.filter(Boolean) : [];
-  const extraKeywords = parseIdentityExtraKeywords(input.identityExtraKeywords);
-  const messages = [
-    {
-      role: 'user',
-      content: `【暗标检查输入 v1｜内置检查口径】
-请按暗标合规口径检查电子投标文件，查找可能暴露投标人身份或违反暗标格式的内容。
-
-内置检查项：
-1. 人名或简称
-2. 单位 / 企业 / 公司名称
-3. 非本项目的工程名、项目名、项目编号、标段号
-4. 历史项目或业绩举例
-5. 联系方式
-6. 非完整句子的特殊符号
-7. 地区名称
-8. 英文标点、英文字母、英文单位
-9. 用户补充词
-
-排除规则：
-1. 本项目名称、本项目编号、本项目标段号可以合法出现，不要报这些。
-2. 只检查电子投标文件可见正文，不要因为图片或扫描件不可见而猜测。
-3. 命中必须带回原文片段，便于核对。
-
-本项目可合法出现的名称或编号：
-${projectIdentifiers.length ? projectIdentifiers.map((item) => `- ${item}`).join('\n') : '- 未从招标文件提取到明确项目名/编号，请结合招标原文自行判断本项目信息。'}`,
-    },
-  ];
-
-  if (input.tenderContent?.trim()) {
-    messages.push({
-      role: 'user',
-      content: `【暗标检查输入 v1｜招标文件摘录】
-以下招标文件用于识别本项目合法名称、编号和标段，不要把这些内容当成暗标泄漏。
-
-${truncatePromptText(input.tenderContent, 6000)}`,
-    });
-  }
-
-  if (extraKeywords.length) {
-    messages.push({
-      role: 'user',
-      content: `【暗标检查输入 v1｜用户补充词】
-以下词语一行一词。如果投标文件出现这些词，按 custom 类别输出。
-
-${extraKeywords.map((item) => `- ${item}`).join('\n')}`,
-    });
-  }
-
-  messages.push({
-    role: 'user',
-    content: `【暗标检查输入 v1｜投标文件原文】
-以下是本次需要一起检查的多份投标文件 Markdown 原文。每份文件都有唯一 bidDocumentId。后续每条发现必须返回所属 bidDocumentId，并且 matchedText / originalExcerpt 必须能在对应原文中找到。
-
-${formatBidDocumentsForPrompt(input)}`,
-  });
-
-  return messages;
-}
-
-function buildIdentityCheckAnalysisMessages(input) {
-  return [
-    ...buildIdentityCheckCommonMessages(input),
-    {
-      role: 'user',
-      content: `【暗标检查任务 v1｜第一轮：分析】
-请先分析暗标泄漏风险范围，不要输出最终列表。
-
-分析要求：
-1. 先确认本项目名称、编号、标段号，后续不得把这些当成泄漏。
-2. 按内置口径梳理投标文件中最可能暴露身份的位置，例如封面、公司介绍、业绩、联系方式、页眉页脚、签名栏。
-3. 指出需要重点核对的人名、单位名、历史项目、地区、英文和特殊符号。
-4. 仅输出分析结论，使用简体中文。`,
-    },
-  ];
-}
-
-function buildIdentityCheckInspectionMessages(input, analysis) {
-  return [
-    ...buildIdentityCheckCommonMessages(input),
-    { role: 'user', content: `【暗标检查任务 v1｜第一轮分析结果】\n${analysis}` },
-    {
-      role: 'user',
-      content: `【暗标检查任务 v1｜第二轮：定位原文】
-请基于第一轮分析，在投标文件中定位疑似暗标泄漏，并摘录原文。
-
-检查要求：
-1. 每条必须写明 bidDocumentId、命中文本、原文片段和大概位置。
-2. 原文片段必须来自投标文件，不要改写。
-3. 不要把本项目名称、编号、标段号当成泄漏。
-4. 暂不要求 JSON，可用结构化 Markdown 输出初步结果。`,
-    },
-  ];
-}
-
-function buildIdentityCheckFinalMessages(input, analysis, draftFindings) {
-  return [
-    ...buildIdentityCheckCommonMessages(input),
-    { role: 'user', content: `【暗标检查任务 v1｜第一轮分析结果】\n${analysis}` },
-    { role: 'user', content: `【暗标检查任务 v1｜第二轮初步定位结果】\n${draftFindings}` },
-    {
-      role: 'user',
-      content: `【暗标检查任务 v1｜第三轮：JSON 定稿】
-请对第二轮结果去重、补漏并删除无法在原文中核对的条目，最终只输出 JSON。
-
-定稿规则：
-1. 只保留能在投标文件原文中找到 matchedText 的条目。
-2. 删除本项目名称、编号、标段号。
-3. category 只能是 person、org、project、contact、region、english、punctuation、custom。
-4. 如果没有符合条件的发现，返回 {"findings":[]}。
-
-JSON 格式：
-{
-  "findings": [
-    {
-      "bidDocumentId": "对应投标文件的 bidDocumentId",
-      "category": "person",
-      "matchedText": "原文中的命中文本",
-      "originalExcerpt": "包含命中文本的原文短片段",
-      "locationHint": "大概位置、章节或上下文线索",
-      "riskReason": "为什么这属于暗标泄漏或格式风险",
-      "suggestion": "如何改成不暴露身份的写法"
-    }
-  ]
-}
-
-仅输出 JSON，不要输出 Markdown、代码块或解释。`,
-    },
-  ];
-}
-
-function normalizeIdentityCategory(value) {
-  const raw = String(value || '').trim().toLowerCase();
-  if (identityCategories.includes(raw)) return raw;
-  if (raw.includes('人') || raw.includes('person')) return 'person';
-  if (raw.includes('单位') || raw.includes('公司') || raw.includes('企业') || raw.includes('org')) return 'org';
-  if (raw.includes('项目') || raw.includes('编号') || raw.includes('标段') || raw.includes('业绩')) return 'project';
-  if (raw.includes('电话') || raw.includes('邮箱') || raw.includes('联系')) return 'contact';
-  if (raw.includes('地区') || raw.includes('省') || raw.includes('市')) return 'region';
-  if (raw.includes('英文') || raw.includes('字母') || raw.includes('单位')) return 'english';
-  if (raw.includes('标点') || raw.includes('符号')) return 'punctuation';
-  return 'custom';
-}
-
-function normalizeIdentityCheckFindings(parsed, bidDocuments, options = {}) {
-  const documents = Array.isArray(bidDocuments) ? bidDocuments : [];
-  const bidDocumentIds = new Set(documents.map((document) => document.id).filter(Boolean));
-  const documentMap = new Map(documents.map((document) => [document.id, document]));
-  const excluded = new Set((options.projectIdentifiers || []).map((item) => normalizeText(item)).filter(Boolean));
-  const seen = new Set();
-  const findings = [];
-  for (const item of getArrayPayload(parsed, ['findings', 'items', 'risks'])) {
-    if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
-    const bidDocumentId = getBidDocumentIdFromItem(item, bidDocumentIds);
-    const bidDocument = documentMap.get(bidDocumentId);
-    if (!bidDocument?.content) continue;
-    const matchedText = normalizeText(item.matchedText || item.matched_text || item.text || item.wrongText).slice(0, 80);
-    const originalExcerpt = normalizeText(item.originalExcerpt || item.original_excerpt || item.excerpt || item.originalText);
-    const riskReason = normalizeText(item.riskReason || item.risk_reason || item.reason);
-    if (!matchedText || !riskReason) continue;
-    if (excluded.has(matchedText) || [...excluded].some((value) => value && matchedText.includes(value) && value.length >= 4 && matchedText.length <= value.length + 4)) {
-      continue;
-    }
-    const position = findVerifiedTypoPosition(bidDocument.content, matchedText, originalExcerpt, options);
-    if (position < 0) continue;
-    const key = `${bidDocumentId}\u0000${matchedText}\u0000${position}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    findings.push({
-      id: normalizeText(item.id) || createId('identity_finding'),
-      bidDocumentId,
-      category: normalizeIdentityCategory(item.category),
-      matchedText,
-      originalExcerpt: createVerifiedTypoExcerpt(bidDocument.content, position, matchedText),
-      locationHint: normalizeText(item.locationHint || item.location_hint) || createLineLocationHint(bidDocument.content, position),
-      riskReason,
-      suggestion: normalizeText(item.suggestion) || '请删除或改写为不暴露投标人身份的表述。',
-    });
-  }
-  return findings;
 }
 
 function normalizeRejectionCheckFindings(parsed, bidDocuments) {
@@ -1074,32 +849,6 @@ function dedupeTypoFindings(findings) {
 
 function dedupeLogicFindings(findings) {
   return limitDedupeItems(findings, Number.MAX_SAFE_INTEGER, (item) => `${item.bidDocumentId}\u0000${item.title}\u0000${item.locationHint}\u0000${item.fallacyReason}`);
-}
-
-function dedupeIdentityFindings(findings) {
-  return limitDedupeItems(findings, Number.MAX_SAFE_INTEGER, (item) => `${item.bidDocumentId}\u0000${item.category}\u0000${item.matchedText}\u0000${item.originalExcerpt}`);
-}
-
-function createIdentityCheckUnits(aiService, documents) {
-  const bidDocuments = Array.isArray(documents) ? documents : [];
-  if (!shouldUseSegmentedBidDocuments(aiService, bidDocuments)) {
-    return [{ bidDocuments }];
-  }
-
-  const config = getCurrentAiConfig(aiService);
-  const units = [];
-  for (const document of bidDocuments) {
-    const segments = createBidDocumentSegments(document, config, identitySegmentLimitRatio);
-    for (const segment of segments) {
-      units.push({
-        bidDocuments: [createSegmentPromptDocument(document, segment)],
-        normalizeDocuments: [document],
-        segmentStartOffset: segment.startOffset,
-        segmentEndOffset: segment.endOffset,
-      });
-    }
-  }
-  return units;
 }
 
 function takeRecentItems(items, limit) {
@@ -1745,71 +1494,6 @@ async function runLogicCheck(aiService, input, onProgress) {
   return normalizeLogicCheckFindings(payload, input.bidDocuments);
 }
 
-async function runIdentityCheckForDocuments(aiService, input, onProgress, normalizeOptions = {}) {
-  onProgress('第一轮：正在分析暗标检查范围。');
-  const analysis = await runText(
-    aiService,
-    { messages: buildIdentityCheckAnalysisMessages(input) },
-    onProgress,
-    '暗标第一轮分析',
-  );
-  onProgress('第二轮：正在定位暗标原文。');
-  const draftFindings = await runText(
-    aiService,
-    { messages: buildIdentityCheckInspectionMessages(input, analysis) },
-    onProgress,
-    '暗标第二轮定位',
-  );
-  onProgress('第三轮：正在补充、去重并生成暗标结果。');
-  const payload = await runJson(aiService, {
-    messages: buildIdentityCheckFinalMessages(input, analysis, draftFindings),
-    schemaName: 'IdentityCheckFindings',
-    progressLabel: '暗标检查结果',
-    failureMessage: '暗标检查结果格式无效，请重新检查',
-  }, onProgress, '暗标第三轮定稿');
-  return normalizeIdentityCheckFindings(payload, normalizeOptions.bidDocuments || input.bidDocuments, {
-    projectIdentifiers: input.projectIdentifiers,
-    segmentStartOffset: normalizeOptions.segmentStartOffset,
-    segmentEndOffset: normalizeOptions.segmentEndOffset,
-  });
-}
-
-function getIdentityCheckNormalizeOptions(unit) {
-  return {
-    bidDocuments: unit.normalizeDocuments,
-    segmentStartOffset: unit.segmentStartOffset,
-    segmentEndOffset: unit.segmentEndOffset,
-  };
-}
-
-async function runIdentityCheck(aiService, input, onProgress) {
-  const documents = Array.isArray(input.bidDocuments) ? input.bidDocuments : [];
-  const units = createIdentityCheckUnits(aiService, documents);
-  if (units.length <= 1) {
-    const unit = units[0] || { bidDocuments: documents };
-    return runIdentityCheckForDocuments(
-      aiService,
-      { ...input, bidDocuments: unit.bidDocuments },
-      onProgress,
-      getIdentityCheckNormalizeOptions(unit),
-    );
-  }
-
-  const findings = [];
-  onProgress('正在按上下文长度分段检查暗标风险。');
-  for (const [index, unit] of units.entries()) {
-    onProgress(`正在检查暗标风险第 ${index + 1}/${units.length} 段。`);
-    findings.push(...await runIdentityCheckForDocuments(
-      aiService,
-      { ...input, bidDocuments: unit.bidDocuments },
-      onProgress,
-      getIdentityCheckNormalizeOptions(unit),
-    ));
-  }
-  onProgress('正在合并暗标检查结果。');
-  return dedupeIdentityFindings(findings);
-}
-
 function updateExtractionState(checkpointTask, currentExtraction, taskPartial, extractionPartial) {
   const nextExtraction = { ...(currentExtraction || {}), ...extractionPartial };
   checkpointTask(taskPartial, {
@@ -1913,7 +1597,7 @@ async function runRejectionCheckTask({ aiService, workspaceStore, updateTask, ch
     ...(payload?.workspaceState || {}),
   };
   const options = state.checkOptions || {};
-  let runOptions = payload?.runOptions || options;
+  const runOptions = payload?.runOptions || options;
   const bidDocuments = Array.isArray(state.bidDocuments) ? state.bidDocuments : [];
   if (typeof workspaceStore.readDocumentMarkdown !== 'function'
     || typeof workspaceStore.createDocumentSignature !== 'function'
@@ -1925,28 +1609,19 @@ async function runRejectionCheckTask({ aiService, workspaceStore, updateTask, ch
     .filter((document) => document.id && document.content.trim());
   const invalidBidAndRejectionItems = String(state.invalidBidAndRejectionItems?.content || '');
   const customCheckItems = String(state.customCheckItems ?? '');
-  const identityExtraKeywords = String(payload?.identityExtraKeywords ?? state.identityExtraKeywords ?? '');
-  const tenderContent = String(state.tenderDocument?.content || '');
-  const projectIdentifiers = extractProjectIdentifiers(tenderContent);
   const rejectionInputSignature = String(workspaceStore.createRejectionCheckInputSignature(currentBidDocuments, invalidBidAndRejectionItems, customCheckItems) || '');
   const bidSignature = currentBidDocuments.map((document) => workspaceStore.createDocumentSignature(document)).filter(Boolean).join('\n---yibiao-rejection-bid-signature---\n');
-  const identityInputSignature = String(
-    (typeof workspaceStore.createIdentityCheckInputSignature === 'function'
-      ? workspaceStore.createIdentityCheckInputSignature(currentBidDocuments, identityExtraKeywords)
-      : [bidSignature, identityExtraKeywords.trim()].join('\n---yibiao-identity-check-input---\n')) || '',
-  );
   if (!currentBidDocuments.length || !bidSignature) throw new Error('缺少投标文件内容，无法开始检查');
 
-  if (runOptions.rejectionCheck && (!invalidBidAndRejectionItems.trim() || !rejectionInputSignature)) {
-    runOptions = { ...runOptions, rejectionCheck: false };
-  }
   const enabledTasks = [
     runOptions.rejectionCheck ? 'rejection' : '',
     runOptions.typoCheck ? 'typo' : '',
     runOptions.logicCheck ? 'logic' : '',
-    runOptions.identityCheck ? 'identity' : '',
   ].filter(Boolean);
   if (!enabledTasks.length) throw new Error('请至少启用一种检查');
+  if (runOptions.rejectionCheck && (!invalidBidAndRejectionItems.trim() || !rejectionInputSignature)) {
+    throw new Error('请先完成无效与废标项解析');
+  }
 
   const developerLogger = createRejectionDeveloperLogger(aiService, 'rejection-check-run', {
     bid_signature: bidSignature,
@@ -1969,7 +1644,6 @@ async function runRejectionCheckTask({ aiService, workspaceStore, updateTask, ch
   if (runOptions.rejectionCheck) initialPartial.rejectionCheckResult = { ...createRunningResult(rejectionInputSignature, '第一轮：正在分析检查范围。'), findings: [], activeFindingId: undefined };
   if (runOptions.typoCheck) initialPartial.typoCheckResult = { ...createRunningResult(bidSignature, '正在识别错别字候选。'), findings: [], activeFindingId: undefined };
   if (runOptions.logicCheck) initialPartial.logicCheckResult = { ...createRunningResult(bidSignature, '正在检查逻辑谬误。'), findings: [], activeFindingId: undefined };
-  if (runOptions.identityCheck) initialPartial.identityCheckResult = { ...createRunningResult(identityInputSignature, '第一轮：正在分析暗标检查范围。'), findings: [], activeFindingId: undefined };
   updateCheckWorkspace(updateTask, checkpointTask, { status: 'running', progress: 5, logs }, initialPartial, true);
 
   function updateOverall(label, partial, persist = false) {
@@ -2031,14 +1705,6 @@ async function runRejectionCheckTask({ aiService, workspaceStore, updateTask, ch
   if (runOptions.logicCheck) {
     tasks.push(runOne('logic', '逻辑谬误检查', (onProgress) => runLogicCheck(aiService, { bidDocuments: currentBidDocuments }, onProgress), 'logicCheckResult', bidSignature));
   }
-  if (runOptions.identityCheck) {
-    tasks.push(runOne('identity', '暗标检查', (onProgress) => runIdentityCheck(aiService, {
-      bidDocuments: currentBidDocuments,
-      tenderContent,
-      projectIdentifiers,
-      identityExtraKeywords,
-    }, onProgress), 'identityCheckResult', identityInputSignature));
-  }
 
   const results = await Promise.all(tasks);
   const failed = results.filter((item) => item.status === 'error');
@@ -2059,9 +1725,4 @@ async function runRejectionCheckTask({ aiService, workspaceStore, updateTask, ch
 module.exports = {
   runRejectionItemsExtractionTask,
   runRejectionCheckTask,
-  _internals: {
-    createIdentityCheckUnits,
-    dedupeIdentityFindings,
-    shouldUseSegmentedBidDocuments,
-  },
 };

@@ -1,6 +1,6 @@
 const { ipcMain } = require('electron');
 
-function registerTechnicalPlanIpc({ technicalPlanStore, taskService, outlineImportService }) {
+function registerTechnicalPlanIpc({ technicalPlanStore, taskService }) {
   ipcMain.handle('technical-plan:load-state', () => technicalPlanStore.loadTechnicalPlan());
   ipcMain.handle('technical-plan:import-tender-document', (_event, filePaths) => taskService.importTenderDocument(filePaths));
   ipcMain.handle('technical-plan:remove-tender-document', (_event, sourceId) => taskService.removeTenderDocument(sourceId));
@@ -17,8 +17,6 @@ function registerTechnicalPlanIpc({ technicalPlanStore, taskService, outlineImpo
   ipcMain.handle('technical-plan:save-outline-config', (_event, payload) => technicalPlanStore.saveOutlineConfig(payload));
   ipcMain.handle('technical-plan:save-outline-selection', (_event, payload) => technicalPlanStore.saveOutlineSelection(payload));
   ipcMain.handle('technical-plan:save-outline', (_event, outlineData) => technicalPlanStore.saveOutline(outlineData));
-  ipcMain.handle('technical-plan:import-outline-document', (_event, filePaths) => outlineImportService.importOutlineDocument(filePaths));
-  ipcMain.handle('technical-plan:export-markdown', (_event, payload) => outlineImportService.exportMarkdownFile(payload));
   ipcMain.handle('technical-plan:save-global-facts-config', (_event, payload) => technicalPlanStore.saveGlobalFactsConfig(payload));
   ipcMain.handle('technical-plan:save-global-facts', (_event, globalFacts) => technicalPlanStore.saveGlobalFacts(globalFacts));
   ipcMain.handle('technical-plan:save-content-generation-options', (_event, options) => technicalPlanStore.saveContentGenerationOptions(options));

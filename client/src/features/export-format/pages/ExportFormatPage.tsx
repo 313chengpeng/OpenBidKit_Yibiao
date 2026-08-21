@@ -272,8 +272,6 @@ function createDefaultExportFormat(): ExportFormatConfig {
       body_cell: { ...DEFAULT_EXPORT_FORMAT.table.body_cell },
     },
     image: { ...DEFAULT_EXPORT_FORMAT.image },
-    text_normalization: { ...DEFAULT_EXPORT_FORMAT.text_normalization },
-    include_table_of_contents: DEFAULT_EXPORT_FORMAT.include_table_of_contents,
   };
 }
 
@@ -305,10 +303,6 @@ function withExportFormatDefaults(source: ExportFormatConfig): ExportFormatConfi
       body_cell: { ...defaults.table.body_cell, ...source.table?.body_cell },
     },
     image: { ...defaults.image, ...source.image },
-    text_normalization: { ...defaults.text_normalization, ...source.text_normalization },
-    include_table_of_contents: typeof source.include_table_of_contents === 'boolean'
-      ? source.include_table_of_contents
-      : defaults.include_table_of_contents,
   };
 }
 
@@ -884,27 +878,7 @@ function ExportFormatPage({ mode = 'create', templateId = null, onBack }: Export
         </label>
         <label className="settings-row">
           <div className="settings-row-copy"><strong>章节页框</strong><span>会导致导航窗格失效</span></div>
-          <AppSwitch
-            checked={config.heading_border.enabled}
-            onCheckedChange={(checked) => {
-              updateHeadingBorder({ enabled: checked });
-              if (checked && config.include_table_of_contents) {
-                showToast('当前章节框线会影响目录，建议先关闭框线', 'info');
-              }
-            }}
-          />
-        </label>
-        <label className="settings-row">
-          <div className="settings-row-copy"><strong>导出目录</strong><span>在封面后插入 Word 目录域，打开文档后更新域即可出页码</span></div>
-          <AppSwitch
-            checked={config.include_table_of_contents}
-            onCheckedChange={(checked) => {
-              updateTemplate({ include_table_of_contents: checked });
-              if (checked && config.heading_border.enabled) {
-                showToast('当前章节框线会影响目录，建议先关闭框线', 'info');
-              }
-            }}
-          />
+          <AppSwitch checked={config.heading_border.enabled} onCheckedChange={(checked) => updateHeadingBorder({ enabled: checked })} />
         </label>
         {config.heading_border.enabled && (
           <>
@@ -1132,24 +1106,6 @@ function ExportFormatPage({ mode = 'create', templateId = null, onBack }: Export
         <label className="settings-row">
           <div className="settings-row-copy"><strong>列表缩进（字符）</strong></div>
           <input type="number" min={0} max={10} step={0.5} value={config.body_text.list_indent_chars} onChange={(event) => updateBodyText({ list_indent_chars: Number(event.target.value) })} />
-        </label>
-        <label className="settings-row">
-          <div className="settings-row-copy"><strong>中文引号</strong><span>导出时把成对英文引号转成 “” / ‘’，数字后的小数点不转换</span></div>
-          <AppSwitch
-            checked={config.text_normalization.chinese_quotes}
-            onCheckedChange={(checked) => updateTemplate({
-              text_normalization: { ...config.text_normalization, chinese_quotes: checked },
-            })}
-          />
-        </label>
-        <label className="settings-row">
-          <div className="settings-row-copy"><strong>去掉中文空格</strong><span>导出时去掉中文之间的空格，保留英文单词和小数点</span></div>
-          <AppSwitch
-            checked={config.text_normalization.strip_spaces}
-            onCheckedChange={(checked) => updateTemplate({
-              text_normalization: { ...config.text_normalization, strip_spaces: checked },
-            })}
-          />
         </label>
       </div>
     </>

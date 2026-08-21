@@ -296,23 +296,10 @@ export const bidAnalysisTasks: BidAnalysisTaskDefinition[] = [
   "dispute_resolution": "争议解决"
 }`),
   },
-  {
-    id: 'bidBriefing',
-    label: '项目简报',
-    description: '根据已解析项整理一页项目简报，不进入默认关键项。',
-    required: false,
-    output: 'markdown',
-    buildTaskPrompt: () => '任务：根据已解析成功的招标要点整理一页项目简报。',
-  },
 ];
 
-export function isSelectableBidAnalysisTask(task: BidAnalysisTaskDefinition) {
-  return task.id !== 'bidBriefing';
-}
-
 export function getBidAnalysisTasks(mode: BidAnalysisMode) {
-  const selectable = bidAnalysisTasks.filter(isSelectableBidAnalysisTask);
-  return mode === 'full' ? selectable : selectable.filter((task) => task.required);
+  return mode === 'full' ? bidAnalysisTasks : bidAnalysisTasks.filter((task) => task.required);
 }
 
 export function getBidAnalysisTaskById(taskId: string) {

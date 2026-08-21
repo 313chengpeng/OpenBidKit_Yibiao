@@ -6,7 +6,6 @@ import type {
   PageSetupConfig,
   TableCellStyleConfig,
   TableStyleConfig,
-  TextNormalizationConfig,
 } from '../../shared/types/exportFormat';
 import { DEFAULT_EXPORT_FORMAT } from '../../shared/types/exportFormat';
 
@@ -43,9 +42,6 @@ interface ExportLayoutPreset {
     body_cell: TableCellLayoutStyle;
   };
   image: ImageStyleConfig;
-  include_table_of_contents?: boolean;
-  text_normalization?: TextNormalizationConfig;
-  heading_numbering?: Array<Pick<HeadingStyleConfig, 'numbering_format' | 'numbering_template'>>;
 }
 
 interface ExportThemePreset {
@@ -73,15 +69,6 @@ const BID_HEADING_NUMBERING: Array<Pick<HeadingStyleConfig, 'numbering_format' |
   { numbering_format: 'custom', numbering_template: '{tail}' },
   { numbering_format: 'custom', numbering_template: '{tail}' },
   { numbering_format: 'custom', numbering_template: '{tail}' },
-];
-
-const EMPTY_HEADING_NUMBERING: Array<Pick<HeadingStyleConfig, 'numbering_format' | 'numbering_template'>> = [
-  { numbering_format: 'custom', numbering_template: '' },
-  { numbering_format: 'custom', numbering_template: '' },
-  { numbering_format: 'custom', numbering_template: '' },
-  { numbering_format: 'custom', numbering_template: '' },
-  { numbering_format: 'custom', numbering_template: '' },
-  { numbering_format: 'custom', numbering_template: '' },
 ];
 
 function heading(
@@ -507,69 +494,6 @@ export const EXPORT_LAYOUT_PRESETS: ExportLayoutPreset[] = [
       caption_italic: false,
     },
   },
-  {
-    id: 'anonymous-bid',
-    label: '暗标版',
-    description: '只用宋体/仿宋/黑体，关闭标题编号，打开中文引号、去空格和 Word 目录，适合暗标投标文件。',
-    page: {
-      paper_size: 'a4',
-      orientation: 'portrait',
-      first_page_different: false,
-      margin_top_cm: 2.5,
-      margin_bottom_cm: 2.5,
-      margin_left_cm: 2.8,
-      margin_right_cm: 2.6,
-      page_number_enabled: true,
-      page_number_format: '第{page}页',
-      page_number_start: 1,
-    },
-    heading_level1_page_break_before: true,
-    heading_border_enabled: false,
-    heading_border_min_heading_left_enabled: false,
-    include_table_of_contents: true,
-    text_normalization: {
-      chinese_quotes: true,
-      strip_spaces: true,
-    },
-    heading_numbering: EMPTY_HEADING_NUMBERING,
-    headings: [
-      heading('黑体', '小二', '居中对齐', true, 12, 10),
-      heading('黑体', '三号', '左对齐', true, 10, 8),
-      heading('黑体', '小三', '左对齐', true, 8, 6),
-      heading('仿宋', '四号', '左对齐', false, 6, 4),
-      heading('仿宋', '小四', '左对齐', false, 4, 3),
-      heading('宋体', '小四', '左对齐', false, 3, 2),
-    ],
-    body_text: {
-      font: '宋体',
-      size: '小四',
-      alignment: '两端对齐',
-      spacing_before_pt: 0,
-      spacing_after_pt: 0,
-      first_line_indent_chars: 2,
-      line_spacing_multiple: 1.5,
-      list_style: 'disc',
-      ordered_list_style: 'decimal-dot',
-      list_indent_chars: 2,
-    },
-    table: {
-      border_width: 1,
-      cell_padding_pt: 6,
-      full_width: true,
-      header_row: { font: '黑体', size: '小四', alignment: '居中对齐' },
-      first_column: { font: '宋体', size: '小四', alignment: '左对齐' },
-      body_cell: { font: '宋体', size: '小四', alignment: '左对齐' },
-    },
-    image: {
-      max_width_percent: 88,
-      alignment: '居中对齐',
-      caption_font: '宋体',
-      caption_size: '小五',
-      caption_alignment: '居中对齐',
-      caption_bold: false,
-      caption_italic: false,
-    },
-  },
 ];
 
 export const EXPORT_THEME_PRESETS: ExportThemePreset[] = [
@@ -747,8 +671,6 @@ export function applyExportLayoutPreset(config: ExportFormatConfig, presetId: st
   const preset = EXPORT_LAYOUT_PRESETS.find((item) => item.id === presetId);
   if (!preset) return config;
 
-  const headingNumbering = preset.heading_numbering || BID_HEADING_NUMBERING;
-
   return {
     ...config,
     page: {
@@ -761,15 +683,10 @@ export function applyExportLayoutPreset(config: ExportFormatConfig, presetId: st
       enabled: preset.heading_border_enabled,
       min_heading_left_enabled: preset.heading_border_min_heading_left_enabled,
     },
-    include_table_of_contents: preset.include_table_of_contents === true,
-    text_normalization: {
-      chinese_quotes: preset.text_normalization?.chinese_quotes === true,
-      strip_spaces: preset.text_normalization?.strip_spaces === true,
-    },
     headings: config.headings.map((current, index) => ({
       ...current,
       ...(preset.headings[index] || {}),
-      ...(headingNumbering[index] || headingNumbering[headingNumbering.length - 1] || BID_HEADING_NUMBERING[BID_HEADING_NUMBERING.length - 1]),
+      ...(BID_HEADING_NUMBERING[index] || BID_HEADING_NUMBERING[BID_HEADING_NUMBERING.length - 1]),
       text_color: current.text_color,
     })),
     body_text: {

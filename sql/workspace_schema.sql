@@ -4,7 +4,7 @@
 -- 1. 本文件用于开源开发者阅读、评审和排查问题，展示 workspace/yibiao.sqlite 的目标完整表结构。
 -- 2. 用户运行客户端时不需要手动执行本文件。
 -- 3. 客户端运行时建表和升级以 Electron Main 侧 migration 代码为准。
--- 4. 当前运行代码已落地 technical_plan_* v1、duplicate_check_* / rejection_check_* v2、knowledge_* v3、technical_plan_global_fact_groups v4、标段兼容 v5/v6、标段选择 v7、旧待选择标段兼容字段 v8、工作流类型和原方案文件状态 v9、招标解析项选择配置 v10、知识库排序 v11、废标项检查多投标文件 v12、已有方案目录配置 v13、多标段优化状态 v14、导出模板库 v15、多招标文件 v16、全文图片编排 v17、目录字数控制 v18、全局事实补全模式 v22、可行性研究报告 v23、暗标检查 v24、知识库全局检索 v25 目标结构。
+-- 4. 当前运行代码已落地 technical_plan_* v1、duplicate_check_* / rejection_check_* v2、knowledge_* v3、technical_plan_global_fact_groups v4、标段兼容 v5/v6、标段选择 v7、旧待选择标段兼容字段 v8、工作流类型和原方案文件状态 v9、招标解析项选择配置 v10、知识库排序 v11、废标项检查多投标文件 v12、已有方案目录配置 v13、多标段优化状态 v14、导出模板库 v15、多招标文件 v16、全文图片编排 v17、目录字数控制 v18、全局事实补全模式 v22、可行性研究报告 v23 目标结构。
 -- 5. 每次表结构调整后，需要同步更新本文件和 runtime migration 版本。
 -- 6. 本文件不保存历史版本，每次更新都写入最新目标完整结构。
 
@@ -14,7 +14,7 @@ PRAGMA busy_timeout = 5000;
 
 -- 目标完整结构版本。
 -- 运行时代码应通过 PRAGMA user_version 判断是否需要自动升级。
-PRAGMA user_version = 25;
+PRAGMA user_version = 23;
 
 -- ============================================================================
 -- 技术方案 technical_plan_*（v1 已落地）
@@ -466,7 +466,6 @@ CREATE TABLE IF NOT EXISTS rejection_check_meta (
   active_result_tab TEXT NOT NULL DEFAULT 'analysis',
   active_check_result_tab TEXT NOT NULL DEFAULT 'rejection',
   custom_check_items TEXT NOT NULL DEFAULT '',
-  identity_extra_keywords TEXT NOT NULL DEFAULT '',
   check_options_json TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
@@ -560,8 +559,8 @@ CREATE TABLE IF NOT EXISTS rejection_check_extraction (
   updated_at TEXT
 );
 
--- 四类检查结果状态。
--- result_type: rejection / typo / logic / identity。
+-- 三类检查结果状态。
+-- result_type: rejection / typo / logic。
 CREATE TABLE IF NOT EXISTS rejection_check_results (
   result_type TEXT PRIMARY KEY,
   status TEXT NOT NULL DEFAULT 'idle',
@@ -628,24 +627,6 @@ CREATE TABLE IF NOT EXISTS rejection_check_logic_findings (
 
 CREATE INDEX IF NOT EXISTS idx_rejection_check_logic_order
 ON rejection_check_logic_findings(sort_order);
-
--- 暗标检查结果。
-CREATE TABLE IF NOT EXISTS rejection_check_identity_findings (
-  finding_id TEXT PRIMARY KEY,
-  bid_document_id TEXT,
-  category TEXT NOT NULL,
-  matched_text TEXT NOT NULL,
-  original_excerpt TEXT NOT NULL,
-  location_hint TEXT NOT NULL,
-  risk_reason TEXT NOT NULL,
-  suggestion TEXT NOT NULL,
-  sort_order INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_rejection_check_identity_order
-ON rejection_check_identity_findings(sort_order);
 
 -- ============================================================================
 -- 知识库 knowledge_*（v3 目标设计）
@@ -850,38 +831,6 @@ CREATE TABLE IF NOT EXISTS knowledge_match_batches (
 
 CREATE INDEX IF NOT EXISTS idx_knowledge_match_batches_status
 ON knowledge_match_batches(document_id, status, batch_index);
-
--- 知识库全局检索索引（v25）。
--- knowledge_search_rows 保存文档 / 条目 / 未筛除 block 的可检索文本；FTS5 用 trigram 做中文子串匹配。
-CREATE TABLE IF NOT EXISTS knowledge_search_rows (
-  id INTEGER PRIMARY KEY,
-  entity_key TEXT NOT NULL UNIQUE,
-  entity_type TEXT NOT NULL,
-  document_id TEXT NOT NULL,
-  folder_id TEXT NOT NULL DEFAULT '',
-  item_id TEXT NOT NULL DEFAULT '',
-  block_id TEXT NOT NULL DEFAULT '',
-  file_name TEXT NOT NULL DEFAULT '',
-  title TEXT NOT NULL DEFAULT '',
-  resume TEXT NOT NULL DEFAULT '',
-  body TEXT NOT NULL DEFAULT ''
-);
-
-CREATE INDEX IF NOT EXISTS idx_knowledge_search_rows_document
-ON knowledge_search_rows(document_id);
-
-CREATE INDEX IF NOT EXISTS idx_knowledge_search_rows_folder
-ON knowledge_search_rows(folder_id, entity_type);
-
-CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_search_fts USING fts5(
-  file_name,
-  title,
-  resume,
-  body,
-  content='knowledge_search_rows',
-  content_rowid='id',
-  tokenize='trigram'
-);
 
 -- ============================================================================
 -- 导出模板 export_templates（v15 目标设计）

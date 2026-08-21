@@ -6,19 +6,9 @@ export type RejectionDocumentSource = 'upload' | 'technical-plan';
 
 export type RejectionCheckStep = 'documents' | 'items' | 'results';
 
-export type RejectionResultTab = 'analysis' | 'custom' | 'identity';
+export type RejectionResultTab = 'analysis' | 'custom';
 
-export type RejectionCheckResultTab = 'rejection' | 'typo' | 'logic' | 'identity';
-
-export type IdentityCheckCategory =
-  | 'person'
-  | 'org'
-  | 'project'
-  | 'contact'
-  | 'region'
-  | 'english'
-  | 'punctuation'
-  | 'custom';
+export type RejectionCheckResultTab = 'rejection' | 'typo' | 'logic';
 
 export type RejectionExtractionStatus = 'idle' | 'running' | 'success' | 'error';
 
@@ -65,29 +55,25 @@ export interface RejectionCheckWorkspaceState {
   activeCheckResultTab?: RejectionCheckResultTab;
   invalidBidAndRejectionItems?: RejectionExtractionState;
   customCheckItems?: string;
-  identityExtraKeywords?: string;
   checkOptions?: RejectionCheckOptions;
   rejectionCheckResult?: RejectionCheckResultState;
   typoCheckResult?: TypoCheckResultState;
   logicCheckResult?: LogicCheckResultState;
-  identityCheckResult?: IdentityCheckResultState;
   extractionTask?: RejectionBackgroundTaskState;
   checkTask?: RejectionBackgroundTaskState;
 }
 
 export type RejectionCheckWorkspacePatch = Omit<Partial<RejectionCheckWorkspaceState>,
-  'rejectionCheckResult' | 'typoCheckResult' | 'logicCheckResult' | 'identityCheckResult'> & {
+  'rejectionCheckResult' | 'typoCheckResult' | 'logicCheckResult'> & {
   rejectionCheckResult?: Partial<RejectionCheckResultState>;
   typoCheckResult?: Partial<TypoCheckResultState>;
   logicCheckResult?: Partial<LogicCheckResultState>;
-  identityCheckResult?: Partial<IdentityCheckResultState>;
 };
 
 export interface RejectionCheckOptions {
   rejectionCheck: boolean;
   typoCheck: boolean;
   logicCheck: boolean;
-  identityCheck: boolean;
 }
 
 export interface RejectionExtractionState {
@@ -155,27 +141,6 @@ export interface LogicCheckFinding {
 export interface LogicCheckResultState {
   status: RejectionCheckRunStatus;
   findings: LogicCheckFinding[];
-  inputSignature?: string;
-  activeFindingId?: string;
-  progressMessage?: string;
-  updatedAt?: string;
-  error?: string;
-}
-
-export interface IdentityCheckFinding {
-  id: string;
-  bidDocumentId: string;
-  category: IdentityCheckCategory;
-  matchedText: string;
-  originalExcerpt: string;
-  locationHint: string;
-  riskReason: string;
-  suggestion: string;
-}
-
-export interface IdentityCheckResultState {
-  status: RejectionCheckRunStatus;
-  findings: IdentityCheckFinding[];
   inputSignature?: string;
   activeFindingId?: string;
   progressMessage?: string;

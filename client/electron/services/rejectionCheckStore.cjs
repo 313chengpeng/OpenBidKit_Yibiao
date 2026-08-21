@@ -17,12 +17,10 @@ const initialState = {
   activeCheckResultTab: 'rejection',
   invalidBidAndRejectionItems: { status: 'idle', content: '' },
   customCheckItems: '',
-  identityExtraKeywords: '',
-  checkOptions: { rejectionCheck: true, typoCheck: true, logicCheck: true, identityCheck: true },
+  checkOptions: { rejectionCheck: true, typoCheck: true, logicCheck: true },
   rejectionCheckResult: { status: 'idle', findings: [] },
   typoCheckResult: { status: 'idle', findings: [] },
   logicCheckResult: { status: 'idle', findings: [] },
-  identityCheckResult: { status: 'idle', findings: [] },
   extractionTask: undefined,
   checkTask: undefined,
 };
@@ -38,10 +36,7 @@ const resultFieldTypes = {
   rejectionCheckResult: 'rejection',
   typoCheckResult: 'typo',
   logicCheckResult: 'logic',
-  identityCheckResult: 'identity',
 };
-
-const identityCategories = ['person', 'org', 'project', 'contact', 'region', 'english', 'punctuation', 'custom'];
 
 const resultTypeFields = Object.fromEntries(Object.entries(resultFieldTypes).map(([field, type]) => [type, field]));
 
@@ -99,11 +94,11 @@ function normalizeDocumentTab(value) {
 }
 
 function normalizeResultTab(value) {
-  return value === 'custom' || value === 'identity' ? value : 'analysis';
+  return value === 'custom' ? 'custom' : 'analysis';
 }
 
 function normalizeCheckResultTab(value) {
-  return ['rejection', 'typo', 'logic', 'identity'].includes(value) ? value : 'rejection';
+  return ['rejection', 'typo', 'logic'].includes(value) ? value : 'rejection';
 }
 
 function normalizeCheckOptions(options) {
@@ -111,7 +106,6 @@ function normalizeCheckOptions(options) {
     rejectionCheck: true,
     typoCheck: options?.typoCheck !== false,
     logicCheck: options?.logicCheck !== false,
-    identityCheck: options?.identityCheck !== false,
   };
 }
 
@@ -135,19 +129,6 @@ function createDocumentSignature(document) {
     content.slice(0, 800),
     content.slice(-800),
   ].join('\n---yibiao-rejection-signature---\n');
-}
-
-function createIdentityCheckInputSignature(bidDocuments, identityExtraKeywords) {
-  const documents = Array.isArray(bidDocuments) ? bidDocuments : [bidDocuments].filter(Boolean);
-  const bidSignature = documents.map(createDocumentSignature).filter(Boolean).join('\n---yibiao-rejection-bid-document---\n');
-  if (!bidSignature) return '';
-  const extra = String(identityExtraKeywords || '').trim();
-  return [
-    bidSignature,
-    extra.length,
-    extra.slice(0, 800),
-    extra.slice(-800),
-  ].join('\n---yibiao-identity-check-input---\n');
 }
 
 function createRejectionCheckInputSignature(bidDocuments, invalidBidAndRejectionItems, customCheckItems) {
@@ -203,9 +184,9 @@ function createRejectionCheckStore({ app, db, fileService, technicalPlanStore, t
     const timestamp = now();
     db.prepare(`
       INSERT INTO rejection_check_meta (
-        id, step, active_document_tab, active_result_tab, active_check_result_tab, custom_check_items, identity_extra_keywords, check_options_json, created_at, updated_at
+        id, step, active_document_tab, active_result_tab, active_check_result_tab, custom_check_items, check_options_json, created_at, updated_at
       ) VALUES (
-        1, 'documents', 'tender', 'analysis', 'rejection', '', '', @check_options_json, @timestamp, @timestamp
+        1, 'documents', 'tender', 'analysis', 'rejection', '', @check_options_json, @timestamp, @timestamp
       )
     `).run({ check_options_json: JSON.stringify(initialState.checkOptions), timestamp });
     return db.prepare('SELECT * FROM rejection_check_meta WHERE id = 1').get();
@@ -643,7 +624,6 @@ function createRejectionCheckStore({ app, db, fileService, technicalPlanStore, t
     if (resultType === 'rejection') db.prepare('DELETE FROM rejection_check_risk_findings').run();
     if (resultType === 'typo') db.prepare('DELETE FROM rejection_check_typo_findings').run();
     if (resultType === 'logic') db.prepare('DELETE FROM rejection_check_logic_findings').run();
-    if (resultType === 'identity') db.prepare('DELETE FROM rejection_check_identity_findings').run();
   }
 
   function saveFindingRows(resultType, findings) {
@@ -714,28 +694,6 @@ function createRejectionCheckStore({ app, db, fileService, technicalPlanStore, t
         updated_at: timestamp,
       }));
     }
-    if (resultType === 'identity') {
-      const insert = db.prepare(`
-        INSERT INTO rejection_check_identity_findings (
-          finding_id, bid_document_id, category, matched_text, original_excerpt, location_hint, risk_reason, suggestion, sort_order, created_at, updated_at
-        ) VALUES (
-          @finding_id, @bid_document_id, @category, @matched_text, @original_excerpt, @location_hint, @risk_reason, @suggestion, @sort_order, @created_at, @updated_at
-        )
-      `);
-      findings.forEach((item, index) => insert.run({
-        finding_id: String(item.id || `identity-finding-${index + 1}`),
-        bid_document_id: item.bidDocumentId ? String(item.bidDocumentId) : null,
-        category: identityCategories.includes(item.category) ? item.category : 'custom',
-        matched_text: String(item.matchedText || ''),
-        original_excerpt: String(item.originalExcerpt || ''),
-        location_hint: String(item.locationHint || ''),
-        risk_reason: String(item.riskReason || ''),
-        suggestion: String(item.suggestion || ''),
-        sort_order: index,
-        created_at: timestamp,
-        updated_at: timestamp,
-      }));
-    }
   }
 
   function loadResult(resultType) {
@@ -783,18 +741,6 @@ function createRejectionCheckStore({ app, db, fileService, technicalPlanStore, t
         locationHint: item.location_hint || undefined,
       }));
     }
-    if (resultType === 'identity') {
-      return db.prepare('SELECT * FROM rejection_check_identity_findings ORDER BY sort_order ASC').all().map((item) => ({
-        id: item.finding_id,
-        bidDocumentId: item.bid_document_id || fallbackBidDocumentId,
-        category: identityCategories.includes(item.category) ? item.category : 'custom',
-        matchedText: item.matched_text,
-        originalExcerpt: item.original_excerpt,
-        locationHint: item.location_hint,
-        riskReason: item.risk_reason,
-        suggestion: item.suggestion,
-      }));
-    }
     return db.prepare('SELECT * FROM rejection_check_logic_findings ORDER BY sort_order ASC').all().map((item) => ({
       id: item.finding_id,
       bidDocumentId: item.bid_document_id || fallbackBidDocumentId,
@@ -811,7 +757,6 @@ function createRejectionCheckStore({ app, db, fileService, technicalPlanStore, t
     db.prepare('DELETE FROM rejection_check_risk_findings').run();
     db.prepare('DELETE FROM rejection_check_typo_findings').run();
     db.prepare('DELETE FROM rejection_check_logic_findings').run();
-    db.prepare('DELETE FROM rejection_check_identity_findings').run();
     db.prepare("DELETE FROM rejection_check_tasks WHERE type = 'rejection-check-run'").run();
   }
 
@@ -829,7 +774,6 @@ function createRejectionCheckStore({ app, db, fileService, technicalPlanStore, t
     if (hasOwn(partial, 'activeResultTab')) metaUpdates.active_result_tab = normalizeResultTab(partial.activeResultTab);
     if (hasOwn(partial, 'activeCheckResultTab')) metaUpdates.active_check_result_tab = normalizeCheckResultTab(partial.activeCheckResultTab);
     if (hasOwn(partial, 'customCheckItems')) metaUpdates.custom_check_items = String(partial.customCheckItems || '');
-    if (hasOwn(partial, 'identityExtraKeywords')) metaUpdates.identity_extra_keywords = String(partial.identityExtraKeywords || '');
     if (hasOwn(partial, 'checkOptions')) metaUpdates.check_options_json = JSON.stringify(normalizeCheckOptions(partial.checkOptions));
     if (Object.keys(metaUpdates).length) updateMeta(metaUpdates);
 
@@ -871,12 +815,10 @@ function createRejectionCheckStore({ app, db, fileService, technicalPlanStore, t
       activeCheckResultTab: normalizeCheckResultTab(meta.active_check_result_tab),
       invalidBidAndRejectionItems: loadExtraction(),
       customCheckItems: meta.custom_check_items || '',
-      identityExtraKeywords: meta.identity_extra_keywords || '',
       checkOptions: normalizeCheckOptions(safeJsonParse(meta.check_options_json, initialState.checkOptions)),
       rejectionCheckResult: loadResult('rejection'),
       typoCheckResult: loadResult('typo'),
       logicCheckResult: loadResult('logic'),
-      identityCheckResult: loadResult('identity'),
       ...tasks,
     };
   }
@@ -1159,7 +1101,7 @@ function createRejectionCheckStore({ app, db, fileService, technicalPlanStore, t
 
   function saveUiState(partial = {}) {
     const uiState = {};
-    for (const field of ['step', 'activeDocumentTab', 'activeResultTab', 'activeCheckResultTab', 'customCheckItems', 'identityExtraKeywords', 'checkOptions']) {
+    for (const field of ['step', 'activeDocumentTab', 'activeResultTab', 'activeCheckResultTab', 'customCheckItems', 'checkOptions']) {
       if (hasOwn(partial, field)) {
         uiState[field] = partial[field];
       }
@@ -1175,7 +1117,6 @@ function createRejectionCheckStore({ app, db, fileService, technicalPlanStore, t
       db.prepare('DELETE FROM rejection_check_risk_findings').run();
       db.prepare('DELETE FROM rejection_check_typo_findings').run();
       db.prepare('DELETE FROM rejection_check_logic_findings').run();
-      db.prepare('DELETE FROM rejection_check_identity_findings').run();
       db.prepare('DELETE FROM rejection_check_documents').run();
       db.prepare('DELETE FROM rejection_check_meta').run();
       ensureMetaRow();
@@ -1201,7 +1142,6 @@ function createRejectionCheckStore({ app, db, fileService, technicalPlanStore, t
     readDocumentMarkdown,
     createDocumentSignature,
     createRejectionCheckInputSignature,
-    createIdentityCheckInputSignature,
     saveUiState,
   };
 }

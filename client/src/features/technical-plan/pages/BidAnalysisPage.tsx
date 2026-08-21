@@ -1,8 +1,8 @@
 import * as Dialog from '@radix-ui/react-dialog';
 import { useEffect, useMemo, useState } from 'react';
 import { trackConfigUsage } from '../../../shared/analytics/analytics';
-import { bidAnalysisTasks, getBidAnalysisTasks, isSelectableBidAnalysisTask } from '../services/bidAnalysisWorkflow';
-import { AppDialog, MarkdownFullscreenViewer, MarkdownRenderer, ProgressBar, useToast } from '../../../shared/ui';
+import { bidAnalysisTasks, getBidAnalysisTasks } from '../services/bidAnalysisWorkflow';
+import { MarkdownFullscreenViewer, MarkdownRenderer, ProgressBar, useToast } from '../../../shared/ui';
 import BidSectionSelectorDialog from '../components/BidSectionSelectorDialog';
 import type { BackgroundTaskState, BidAnalysisMode, BidAnalysisTasks, BidAnalysisTaskState, BidSectionExtractionStatus, BidSectionMode, DetectedBidSection, TechnicalPlanState } from '../types';
 
@@ -36,9 +36,7 @@ const modeOptions: Array<{ id: 'key' | 'full'; title: string; badge: string }> =
   },
 ];
 
-const selectableBidAnalysisTasks = bidAnalysisTasks.filter(isSelectableBidAnalysisTask);
-const allBidAnalysisTaskIds = selectableBidAnalysisTasks.map((task) => task.id);
-const briefingTaskDefinition = bidAnalysisTasks.find((task) => task.id === 'bidBriefing');
+const allBidAnalysisTaskIds = bidAnalysisTasks.map((task) => task.id);
 const requiredBidAnalysisTaskIds = getBidAnalysisTasks('key').map((task) => task.id);
 const requiredBidAnalysisTaskIdSet = new Set(requiredBidAnalysisTaskIds);
 
@@ -175,7 +173,7 @@ function JsonResultTable({ content }: { content: string }) {
   if (!data) {
     return (
       <MarkdownFullscreenViewer className="markdown-viewer bid-analysis-output" title="JSON 内容全屏预览">
-        <MarkdownRenderer allowRawHtml={false}>
+        <MarkdownRenderer>
           {`\`\`\`json\n${content}\n\`\`\``}
         </MarkdownRenderer>
       </MarkdownFullscreenViewer>
@@ -196,37 +194,6 @@ function JsonResultTable({ content }: { content: string }) {
       </table>
     </div>
   );
-}
-
-const briefingSourceIds = ['projectOverview', 'projectInfo', 'partAInfo', 'responseFileRequirements', 'techRequirements', 'businessScoring', 'discardedBids', 'keyInfo', 'marginInfo'] as const;
-const requiredBriefingSourceIds = ['projectOverview', 'projectInfo', 'partAInfo', 'responseFileRequirements'] as const;
-
-function summarizeText(content: string, limit = 280) {
-  const text = String(content || '').replace(/\s+/g, ' ').trim();
-  if (!text) return '尚未解析';
-  return text.length > limit ? `${text.slice(0, limit)}…` : text;
-}
-
-function formatBriefingJson(content: string) {
-  const data = tryParseJsonObject(content);
-  if (!data) return summarizeText(content);
-  return Object.entries(data)
-    .map(([key, value]) => `${jsonFieldLabels[key] || key}：${formatJsonValue(value)}`)
-    .join('；');
-}
-
-function buildInstantBriefingMarkdown(tasks: BidAnalysisTasks) {
-  const item = (id: string) => tasks[id];
-  const success = (id: string) => item(id)?.status === 'success' && String(item(id)?.content || '').trim();
-  const sections = [
-    { title: '项目是什么', body: [success('projectOverview') ? String(item('projectOverview')?.content) : '', success('projectInfo') ? formatBriefingJson(String(item('projectInfo')?.content)) : ''].filter(Boolean).join('\n\n') || '关键项尚未完成，项目信息还不完整。' },
-    { title: '谁采购', body: success('partAInfo') ? formatBriefingJson(String(item('partAInfo')?.content)) : '尚未解析甲方信息。' },
-    { title: '必须响应', body: success('responseFileRequirements') ? summarizeText(String(item('responseFileRequirements')?.content), 500) : '尚未解析响应文件要求。' },
-    { title: '评分重点', body: [success('techRequirements') ? summarizeText(String(item('techRequirements')?.content), 360) : '', success('businessScoring') ? summarizeText(String(item('businessScoring')?.content), 240) : ''].filter(Boolean).join('\n\n') || '尚未解析评分项。' },
-    { title: '废标点', body: success('discardedBids') ? summarizeText(String(item('discardedBids')?.content), 360) : '尚未解析废标项。' },
-    { title: '节点', body: [success('keyInfo') ? formatBriefingJson(String(item('keyInfo')?.content)) : '', success('marginInfo') ? formatBriefingJson(String(item('marginInfo')?.content)) : ''].filter(Boolean).join('\n\n') || '尚未解析关键节点或保证金。' },
-  ];
-  return sections.map((section) => `### ${section.title}\n${section.body}`).join('\n\n');
 }
 
 function BidAnalysisPage({
@@ -261,29 +228,17 @@ function BidAnalysisPage({
     nextTaskIds: string[];
   } | null>(null);
   const [progressCollapsed, setProgressCollapsed] = useState(false);
-  const [exportedBriefingPath, setExportedBriefingPath] = useState('');
   const { showToast } = useToast();
   const effectiveSelectedTaskIds = useMemo(() => getSelectedTaskIdsForMode(mode, selectedTaskIds), [mode, selectedTaskIds]);
   const selectedTasks = useMemo(() => {
     const selectedIdSet = new Set(effectiveSelectedTaskIds);
-    return selectableBidAnalysisTasks.filter((task) => selectedIdSet.has(task.id));
+    return bidAnalysisTasks.filter((task) => selectedIdSet.has(task.id));
   }, [effectiveSelectedTaskIds]);
   const requiredTasks = useMemo(() => getBidAnalysisTasks('key'), []);
-  const instantBriefingMarkdown = useMemo(() => buildInstantBriefingMarkdown(tasks), [tasks]);
-  const briefingState = tasks.bidBriefing;
-  const briefingContent = briefingState?.content || '';
-  const briefingIncomplete = requiredBriefingSourceIds.some((id) => tasks[id]?.status !== 'success' || !String(tasks[id]?.content || '').trim())
-    || briefingSourceIds.some((id) => !tasks[id]?.content);
-  const exportableBriefing = briefingContent.trim() || instantBriefingMarkdown;
-  const briefingSelected = selectedTaskId === 'bidBriefing';
-  const visibleSelectedTaskId = briefingSelected
-    ? 'bidBriefing'
-    : selectedTasks.some((task) => task.id === selectedTaskId)
-      ? selectedTaskId
-      : selectedTasks[0]?.id || 'projectOverview';
-  const activeTask = briefingSelected
-    ? briefingTaskDefinition
-    : selectedTasks.find((task) => task.id === visibleSelectedTaskId) || selectedTasks[0];
+  const visibleSelectedTaskId = selectedTasks.some((task) => task.id === selectedTaskId)
+    ? selectedTaskId
+    : selectedTasks[0]?.id || 'projectOverview';
+  const activeTask = selectedTasks.find((task) => task.id === visibleSelectedTaskId) || selectedTasks[0];
   const activeTaskState = activeTask ? tasks[activeTask.id] : undefined;
   const activeTaskStatus = activeTaskState?.status || 'idle';
   const activeTaskContent = activeTaskState?.content || '';
@@ -312,7 +267,7 @@ function BidAnalysisPage({
 
   const syncProgressForSelection = (nextTaskIds: string[]) => {
     const selectedIdSet = new Set(normalizeSelectedTaskIds(nextTaskIds));
-    const nextTasks = selectableBidAnalysisTasks.filter((task) => selectedIdSet.has(task.id));
+    const nextTasks = bidAnalysisTasks.filter((task) => selectedIdSet.has(task.id));
     const nextDoneCount = nextTasks.filter((task) => {
       const status = tasks[task.id]?.status;
       return status === 'success' || status === 'error';
@@ -394,7 +349,7 @@ function BidAnalysisPage({
 
     const normalizedTaskIds = normalizeSelectedTaskIds(nextTaskIds);
     const nextSelectedIdSet = new Set(normalizedTaskIds);
-    const nextSelectedTasks = selectableBidAnalysisTasks.filter((task) => nextSelectedIdSet.has(task.id));
+    const nextSelectedTasks = bidAnalysisTasks.filter((task) => nextSelectedIdSet.has(task.id));
     const retryTask = taskIds?.length === 1 ? nextSelectedTasks.find((task) => task.id === taskIds[0]) : undefined;
     const forceRerun = !taskIds?.length && nextSelectedTasks.length > 0 && nextSelectedTasks.every((task) => tasks[task.id]?.status === 'success');
 
@@ -569,59 +524,6 @@ function BidAnalysisPage({
     }
   };
 
-  const startBriefing = async () => {
-    if (!hasTenderFile) {
-      showToast('请先上传招标文件', 'info');
-      return;
-    }
-    try {
-      setRunning(true);
-      await window.yibiao?.tasks.startBidAnalysis({
-        mode,
-        selected_task_ids: effectiveSelectedTaskIds,
-        task_ids: ['bidBriefing'],
-      });
-      setSelectedTaskId('bidBriefing');
-      showToast('项目简报生成任务已在后台启动', 'success');
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : '启动简报任务失败', 'error');
-    } finally {
-      setRunning(false);
-    }
-  };
-
-  const copyBriefing = async () => {
-    if (!exportableBriefing.trim()) {
-      showToast('当前没有可复制的简报', 'info');
-      return;
-    }
-    await navigator.clipboard.writeText(briefingContent.trim() || instantBriefingMarkdown);
-    showToast('简报已复制', 'success');
-  };
-
-  const exportBriefing = async () => {
-    if (!exportableBriefing.trim()) {
-      showToast('当前没有可导出的简报', 'info');
-      return;
-    }
-    try {
-      const result = await window.yibiao?.technicalPlan.exportMarkdown({
-        content: briefingContent.trim() || instantBriefingMarkdown,
-        defaultFileName: '项目简报.md',
-        title: '导出项目简报',
-      });
-      if (result?.canceled) return;
-      if (!result?.success) {
-        showToast(result?.message || '导出简报失败', 'error');
-        return;
-      }
-      showToast(result.message || 'Markdown 已导出', 'success');
-      if (result.path) setExportedBriefingPath(result.path);
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : '导出简报失败', 'error');
-    }
-  };
-
   const copyActiveResult = async () => {
     if (!activeTaskContent) {
       showToast('当前没有可复制的解析结果', 'info');
@@ -713,18 +615,6 @@ function BidAnalysisPage({
             )}
           </div>
           <div className="bid-analysis-task-list">
-            <div className="bid-analysis-task-group">
-              <span>项目简报</span>
-              <button
-                type="button"
-                className={`bid-analysis-task-item is-${briefingState?.status || 'idle'}${briefingSelected ? ' is-active' : ''}`}
-                onClick={() => setSelectedTaskId('bidBriefing')}
-              >
-                <strong>项目简报</strong>
-                <small>{briefingContent ? `${briefingContent.length} 字` : '从已解析项拼一页，也可再生成 AI 简报'}</small>
-                <em>{statusLabel[briefingState?.status || 'idle']}</em>
-              </button>
-            </div>
             {taskGroups.map((group) => {
               const groupTasks = selectedTasks.filter((task) => group.ids.includes(task.id));
               if (!groupTasks.length) {
@@ -758,76 +648,36 @@ function BidAnalysisPage({
         </aside>
 
         <article className="bid-analysis-reader">
-          {briefingSelected ? (
-            <>
-              <div className="bid-analysis-reader-head">
-                <div>
-                  <span className="section-kicker">项目简报</span>
-                  <strong>一页纸要点</strong>
-                  <p>先用已解析项拼出即时卡片，再按需生成 AI 简报。AI 简报不进入默认关键项。</p>
-                </div>
-                <div className="bid-analysis-reader-actions">
-                  <span className={`bid-analysis-status is-${briefingState?.status || 'idle'}`}>{statusLabel[briefingState?.status || 'idle']}</span>
-                  <button type="button" className="secondary-action" onClick={() => void copyBriefing()} disabled={!exportableBriefing.trim()}>复制简报</button>
-                  <button type="button" className="secondary-action" onClick={() => void exportBriefing()} disabled={!exportableBriefing.trim()}>导出 Markdown</button>
-                  <button type="button" className="primary-action" onClick={() => void startBriefing()} disabled={taskRunning || !hasTenderFile}>
-                    {briefingState?.status === 'running' ? '生成中...' : briefingContent ? '重新生成简报' : '生成简报'}
-                  </button>
-                </div>
-              </div>
-              <div className="bid-briefing-body">
-                {briefingIncomplete && (
-                  <p className="bid-briefing-incomplete">关键项尚未全部完成，当前简报不完整，仅展示已有字段。</p>
-                )}
-                <div className="bid-briefing-card">
-                  <MarkdownRenderer allowRawHtml={false}>{instantBriefingMarkdown}</MarkdownRenderer>
-                </div>
-                {briefingContent ? (
-                  <MarkdownFullscreenViewer className="markdown-viewer bid-analysis-output" title="项目简报全屏预览">
-                    <MarkdownRenderer allowRawHtml={false}>{briefingContent}</MarkdownRenderer>
-                  </MarkdownFullscreenViewer>
-                ) : (
-                  <div className="markdown-empty-state bid-analysis-empty">
-                    <strong>{briefingState?.status === 'error' ? briefingState.error || '简报生成失败' : '还没有 AI 简报'}</strong>
-                    <p>即时卡片已根据已解析项生成。点击“生成简报”后，会把已成功项交给模型整理成一页 Markdown。</p>
-                  </div>
-                )}
-              </div>
-            </>
-          ) : (
-            <>
-              <div className="bid-analysis-reader-head">
-                <div>
-                  <span className="section-kicker">解析结果</span>
-                  <strong>{activeTask?.label || '解析结果'}</strong>
-                  <p>{activeTask?.description || '选择左侧任务查看解析结果。'}</p>
-                </div>
-                <div className="bid-analysis-reader-actions">
-                  <span className={`bid-analysis-status is-${activeTaskStatus}`}>{statusLabel[activeTaskStatus]}</span>
-                  {activeTaskStatus === 'error' && (
-                    <button type="button" className="secondary-action" onClick={retryActiveTask} disabled={taskRunning || !hasTenderFile}>重新解析此项</button>
-                  )}
-                  <button type="button" className="secondary-action" onClick={copyActiveResult} disabled={!activeTaskContent}>复制</button>
-                </div>
-              </div>
-
-              {activeTaskContent ? (
-                activeTask?.output === 'json' ? (
-                  <JsonResultTable content={activeTaskContent} />
-                ) : (
-                  <MarkdownFullscreenViewer className="markdown-viewer bid-analysis-output" title={`${activeTask?.label || '解析结果'}全屏预览`}>
-                    <MarkdownRenderer allowRawHtml={false}>
-                      {activeTaskContent}
-                    </MarkdownRenderer>
-                  </MarkdownFullscreenViewer>
-                )
-              ) : (
-                <div className="markdown-empty-state bid-analysis-empty">
-                  <strong>{activeTaskStatus === 'error' ? activeTaskState?.error || '解析失败' : '等待解析结果'}</strong>
-                  <p>{activeTaskStatus === 'idle' ? '点击开始解析后，左侧任务会并发运行；选择任一任务查看实时输出。' : '正在等待模型返回内容。'}</p>
-                </div>
+          <div className="bid-analysis-reader-head">
+            <div>
+              <span className="section-kicker">解析结果</span>
+              <strong>{activeTask?.label || '解析结果'}</strong>
+              <p>{activeTask?.description || '选择左侧任务查看解析结果。'}</p>
+            </div>
+            <div className="bid-analysis-reader-actions">
+              <span className={`bid-analysis-status is-${activeTaskStatus}`}>{statusLabel[activeTaskStatus]}</span>
+              {activeTaskStatus === 'error' && (
+                <button type="button" className="secondary-action" onClick={retryActiveTask} disabled={taskRunning || !hasTenderFile}>重新解析此项</button>
               )}
-            </>
+              <button type="button" className="secondary-action" onClick={copyActiveResult} disabled={!activeTaskContent}>复制</button>
+            </div>
+          </div>
+
+          {activeTaskContent ? (
+            activeTask?.output === 'json' ? (
+              <JsonResultTable content={activeTaskContent} />
+            ) : (
+              <MarkdownFullscreenViewer className="markdown-viewer bid-analysis-output" title={`${activeTask?.label || '解析结果'}全屏预览`}>
+                <MarkdownRenderer>
+                  {activeTaskContent}
+                </MarkdownRenderer>
+              </MarkdownFullscreenViewer>
+            )
+          ) : (
+            <div className="markdown-empty-state bid-analysis-empty">
+              <strong>{activeTaskStatus === 'error' ? activeTaskState?.error || '解析失败' : '等待解析结果'}</strong>
+              <p>{activeTaskStatus === 'idle' ? '点击开始解析后，左侧任务会并发运行；选择任一任务查看实时输出。' : '正在等待模型返回内容。'}</p>
+            </div>
           )}
         </article>
       </section>
@@ -925,7 +775,7 @@ function BidAnalysisPage({
                   <span>{requiredBidAnalysisTaskIds.length} 项必选</span>
                 </div>
                 <div className="bid-analysis-config-grid">
-                  {selectableBidAnalysisTasks.filter((definition) => definition.required).map(renderConfigTask)}
+                  {bidAnalysisTasks.filter((definition) => definition.required).map(renderConfigTask)}
                 </div>
               </section>
 
@@ -935,7 +785,7 @@ function BidAnalysisPage({
                   <span>当前共选择 {draftSelectedCount} 项</span>
                 </div>
                 <div className="bid-analysis-config-grid">
-                  {selectableBidAnalysisTasks.filter((definition) => !definition.required).map(renderConfigTask)}
+                  {bidAnalysisTasks.filter((definition) => !definition.required).map(renderConfigTask)}
                 </div>
               </section>
             </div>
@@ -998,32 +848,6 @@ function BidAnalysisPage({
         onSelect={handleSectionSelect}
         onCancel={handleSectionCancel}
         busy={selectingSection}
-      />
-
-      <AppDialog
-        open={Boolean(exportedBriefingPath)}
-        onOpenChange={(open) => { if (!open) setExportedBriefingPath(''); }}
-        kicker="导出完成"
-        title="是否打开简报文件？"
-        description={exportedBriefingPath}
-        actions={(
-          <>
-            <button type="button" className="secondary-action" onClick={() => setExportedBriefingPath('')}>稍后打开</button>
-            <button
-              type="button"
-              className="primary-action"
-              onClick={() => {
-                const filePath = exportedBriefingPath;
-                setExportedBriefingPath('');
-                void window.yibiao?.export.openFile(filePath).catch((error) => {
-                  showToast(error instanceof Error ? error.message : '打开文件失败', 'error');
-                });
-              }}
-            >
-              打开文件
-            </button>
-          </>
-        )}
       />
     </div>
   );

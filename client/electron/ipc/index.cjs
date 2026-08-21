@@ -16,8 +16,6 @@ const { registerFeasibilityReportIpc } = require('./feasibilityReportIpc.cjs');
 const { registerTemplateIpc } = require('./templateIpc.cjs');
 const { registerSystemFontIpc } = require('./systemFontIpc.cjs');
 const { registerPluginIpc } = require('./pluginIpc.cjs');
-const { createCheckResultExportService } = require('../services/checkResultExportService.cjs');
-const { createOutlineImportService } = require('../services/outlineImportService.cjs');
 const pluginService = require('../services/pluginService.cjs');
 const { createAgentService } = require('../services/agentService.cjs');
 const { createAiService } = require('../services/aiService.cjs');
@@ -123,8 +121,6 @@ const workspaceDatabaseChannels = [
   'technical-plan:set-workflow-kind',
   'technical-plan:save-outline-config',
   'technical-plan:save-outline',
-  'technical-plan:import-outline-document',
-  'technical-plan:export-markdown',
   'technical-plan:save-global-facts-config',
   'technical-plan:save-global-facts',
   'technical-plan:save-content-generation-options',
@@ -148,7 +144,6 @@ const workspaceDatabaseChannels = [
   'duplicate-check:save-ui-state',
   'duplicate-check:update-state',
   'duplicate-check:clear',
-  'duplicate-check:export-excel',
   'rejection-check:load-state',
   'rejection-check:import-document',
   'rejection-check:import-tender-from-technical-plan',
@@ -156,7 +151,6 @@ const workspaceDatabaseChannels = [
   'rejection-check:save-ui-state',
   'rejection-check:update-state',
   'rejection-check:clear',
-  'rejection-check:export-excel',
   'knowledge-base:list',
   'knowledge-base:create-folder',
   'knowledge-base:rename-folder',
@@ -174,8 +168,6 @@ const workspaceDatabaseChannels = [
   'tasks:suppress-outline-selection-auto-confirmation',
   'tasks:start-global-facts-generation',
   'tasks:start-content-generation',
-  'tasks:start-template-fill',
-  'tasks:start-point-to-point',
   'tasks:pause-content-generation',
   'tasks:start-rejection-items-extraction',
   'tasks:start-rejection-check',
@@ -264,8 +256,6 @@ function registerWorkspaceDatabaseServices({ app, configStore, aiService, agentS
   const rejectionCheckStore = createRejectionCheckStore({ app, db: sqliteDatabase.db, fileService, technicalPlanStore, taskLogStore });
   const templateStore = createTemplateStore({ db: sqliteDatabase.db });
   const duplicateCheckService = createDuplicateCheckService({ app, configStore, workspaceStore: duplicateCheckStore });
-  const checkResultExportService = createCheckResultExportService({ rejectionCheckStore, duplicateCheckStore });
-  const outlineImportService = createOutlineImportService({ configStore });
   const taskService = createTaskService({ aiService, agentService, autoConfirmationService, technicalPlanStore, rejectionCheckStore, duplicateCheckStore, feasibilityReportStore, knowledgeBaseService, duplicateCheckService });
   const agentWorkspaceService = createAgentWorkspaceService({ agentService, taskService, technicalPlanStore, feasibilityReportStore });
   agentWorkspaceServiceRef = agentWorkspaceService;
@@ -277,10 +267,10 @@ function registerWorkspaceDatabaseServices({ app, configStore, aiService, agentS
 
   clearWorkspaceDatabaseIpc();
   registerKnowledgeBaseIpc({ knowledgeBaseService });
-  registerTechnicalPlanIpc({ technicalPlanStore, taskService, outlineImportService });
+  registerTechnicalPlanIpc({ technicalPlanStore, taskService });
   registerFeasibilityReportIpc({ feasibilityReportStore, taskService });
-  registerDuplicateCheckIpc({ duplicateCheckStore, checkResultExportService });
-  registerRejectionCheckIpc({ rejectionCheckStore, taskService, checkResultExportService });
+  registerDuplicateCheckIpc({ duplicateCheckStore });
+  registerRejectionCheckIpc({ rejectionCheckStore, taskService });
   registerTemplateIpc({ templateStore });
   registerTaskIpc({ taskService });
   updateStatus({ phase: 'ready', ready: true, message: '本地数据库已就绪' });

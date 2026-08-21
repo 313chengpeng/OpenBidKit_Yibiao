@@ -23,8 +23,6 @@ interface ContentEditPageProps {
   contentGenerationOptions?: ContentGenerationOptions;
   contentIllustrationPlan?: ContentIllustrationPlanState;
   sections: ContentGenerationSections;
-  templateFillTask?: BackgroundTaskState;
-  pointToPointTask?: BackgroundTaskState;
   onContentGenerationOptionsChange: (options: ContentGenerationOptions) => Promise<void> | void;
   onContentSaved: (item: OutlineItem, content: string) => Promise<void> | void;
 }
@@ -51,8 +49,8 @@ const statusLabels: Record<TreeStatus, string> = {
 };
 
 const pendingModeDescriptions: Record<Exclude<OutlineContentMode, 'ai-generate'>, string> = {
-  'template-fill': '该小节已标记为模板填写，可从招标原文提取表格或格式后回填。没有依据的格子会保留【待填写】。',
-  'point-to-point': '该小节已标记为点对点应答表。建议在正文完成后生成，页码会写成 Word 域占位，打开文档后更新域即可出页码。',
+  'template-fill': '该小节已标记为模板填写，后续将从招标文件提取并填充内容。',
+  'point-to-point': '该小节已标记为点对点应答表，后续将在正文完成并确定 Word 页码后回填。',
   other: '该小节采用其他处理模式，暂不进入 AI 正文生成流程。',
 };
 
@@ -278,7 +276,6 @@ function buildOutlineMeta(items: OutlineItem[], sections: ContentGenerationSecti
 const MarkdownContent = memo(function MarkdownContent({ content, onPreviewImage }: { content: string; onPreviewImage: (src: string, alt: string) => void }) {
   return (
     <MarkdownRenderer
-      allowRawHtml={false}
       imageMode="preview"
       imageClassName="markdown-clickable-image"
       renderMermaid
@@ -297,8 +294,6 @@ function ContentEditPage({
   contentGenerationOptions,
   contentIllustrationPlan,
   sections,
-  templateFillTask,
-  pointToPointTask,
   onContentGenerationOptionsChange,
   onContentSaved,
 }: ContentEditPageProps) {
@@ -333,10 +328,7 @@ function ContentEditPage({
   const pausing = task?.status === 'pausing' || pausePending;
   const paused = task?.status === 'paused';
   const taskFailed = task?.status === 'error';
-  const templateFillRunning = templateFillTask?.status === 'running' || templateFillTask?.status === 'pausing';
-  const pointToPointRunning = pointToPointTask?.status === 'running' || pointToPointTask?.status === 'pausing';
-  const chapterModeTaskRunning = templateFillRunning || pointToPointRunning;
-  const taskInFlight = running || pausing || chapterModeTaskRunning;
+  const taskInFlight = running || pausing;
   const phaseVisible = taskInFlight || paused || taskFailed;
   const taskBlocksGeneration = taskInFlight || paused;
   const contentStats = task?.stats?.content;
@@ -381,8 +373,6 @@ function ContentEditPage({
       totalWords: summary.totalWords + (status === 'ignored' ? 0 : (outlineMeta.get(item.id)?.words || 0)),
     };
   }, { completedCount: 0, failedCount: 0, ignoredCount: 0, totalWords: 0 }), [leaves, outlineMeta, sections]);
-  const templateFillLeaves = useMemo(() => allLeaves.filter((item) => item.content_mode === 'template-fill'), [allLeaves]);
-  const pointToPointLeaves = useMemo(() => allLeaves.filter((item) => item.content_mode === 'point-to-point'), [allLeaves]);
   const { completedCount, failedCount, ignoredCount, totalWords } = contentSummary;
   const resolvedCount = completedCount + ignoredCount;
   const unresolvedCount = Math.max(0, leaves.length - resolvedCount);
@@ -982,30 +972,6 @@ function ContentEditPage({
     }
   };
 
-  const startChapterModeTask = async (mode: 'template-fill' | 'point-to-point', nodeIds?: string[]) => {
-    if (taskBlocksGeneration) {
-      showToast('请先完成当前正文或模板任务，再继续', 'info');
-      return;
-    }
-    const targets = mode === 'template-fill' ? templateFillLeaves : pointToPointLeaves;
-    const selectedIds = nodeIds?.length ? nodeIds : targets.map((item) => item.id);
-    if (!selectedIds.length) {
-      showToast(mode === 'template-fill' ? '当前没有模板填写小节' : '当前没有点对点应答表小节', 'info');
-      return;
-    }
-    try {
-      if (mode === 'template-fill') {
-        await window.yibiao?.tasks.startTemplateFill({ nodeIds: selectedIds });
-        showToast(selectedIds.length === 1 ? '模板填写任务已在后台启动' : `已开始填充 ${selectedIds.length} 个模板小节`, 'success');
-      } else {
-        await window.yibiao?.tasks.startPointToPoint({ nodeIds: selectedIds });
-        showToast(selectedIds.length === 1 ? '点对点应答表任务已在后台启动' : `已开始生成 ${selectedIds.length} 个应答表`, 'success');
-      }
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : '启动任务失败', 'error');
-    }
-  };
-
   const renderTree = (items: OutlineItem[], level = 0): ReactNode => items.map((item) => {
     const meta = outlineMeta.get(item.id);
     const status = meta?.status || 'idle';
@@ -1109,16 +1075,6 @@ function ContentEditPage({
               <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.05.05a2 2 0 0 1-2.83 2.83l-.05-.05a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.04 1.56V21a2 2 0 0 1-4 0v-.08a1.7 1.7 0 0 0-1.04-1.56 1.7 1.7 0 0 0-1.87.34l-.05.05a2 2 0 0 1-2.83-2.83l.05-.05A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.56-1.04H3a2 2 0 0 1 0-4h.08A1.7 1.7 0 0 0 4.6 8.93a1.7 1.7 0 0 0-.34-1.87l-.05-.05a2 2 0 0 1 2.83-2.83l.05.05a1.7 1.7 0 0 0 1.87.34A1.7 1.7 0 0 0 10 3.01V3a2 2 0 0 1 4 0v.08a1.7 1.7 0 0 0 1.04 1.56 1.7 1.7 0 0 0 1.87-.34l.05-.05a2 2 0 0 1 2.83 2.83l-.05.05a1.7 1.7 0 0 0-.34 1.87 1.7 1.7 0 0 0 1.56 1.04H21a2 2 0 0 1 0 4h-.08A1.7 1.7 0 0 0 19.4 15Z" />
             </svg>
           </button>
-          {templateFillLeaves.length > 0 && (
-            <button type="button" className="secondary-action" onClick={() => void startChapterModeTask('template-fill')} disabled={taskBlocksGeneration}>
-              {templateFillRunning ? '正在填充模板' : '填充全部模板'}
-            </button>
-          )}
-          {pointToPointLeaves.length > 0 && (
-            <button type="button" className="secondary-action" onClick={() => void startChapterModeTask('point-to-point')} disabled={taskBlocksGeneration}>
-              {pointToPointRunning ? '正在生成应答表' : '生成全部应答表'}
-            </button>
-          )}
           {awaitingContentDecision ? (
             <>
               {unresolvedCount > 0 && (
@@ -1136,16 +1092,6 @@ function ContentEditPage({
             </button>
           )}
         </div>
-        {(templateFillTask?.status === 'error' || pointToPointTask?.status === 'error') && (
-          <div className="content-chapter-task-errors" role="alert">
-            {templateFillTask?.status === 'error' && (
-              <p className="content-chapter-task-error">模板填写失败：{templateFillTask.error || '未知错误'}</p>
-            )}
-            {pointToPointTask?.status === 'error' && (
-              <p className="content-chapter-task-error">应答表生成失败：{pointToPointTask.error || '未知错误'}</p>
-            )}
-          </div>
-        )}
       </section>
 
       {showIllustrationStats && (
@@ -1213,19 +1159,7 @@ function ContentEditPage({
                   <button type="button" className="secondary-action" onClick={cancelEditingContent}>取消</button>
                 </>
               ) : (
-                <>
-                  {selectedIsLeaf && selectedItem?.content_mode === 'template-fill' && (
-                    <button type="button" className="secondary-action" onClick={() => void startChapterModeTask('template-fill', [selectedItem.id])} disabled={taskBlocksGeneration}>
-                      {selectedContent.trim() ? '重新填充模板' : '填充模板'}
-                    </button>
-                  )}
-                  {selectedIsLeaf && selectedItem?.content_mode === 'point-to-point' && (
-                    <button type="button" className="secondary-action" onClick={() => void startChapterModeTask('point-to-point', [selectedItem.id])} disabled={taskBlocksGeneration}>
-                      {selectedContent.trim() ? '重新生成应答表' : '生成应答表'}
-                    </button>
-                  )}
-                  <button type="button" className="secondary-action" onClick={startEditingContent} disabled={!selectedItem || !selectedIsLeaf || taskBlocksGeneration}>编辑</button>
-                </>
+                <button type="button" className="secondary-action" onClick={startEditingContent} disabled={!selectedItem || !selectedIsLeaf || taskBlocksGeneration}>编辑</button>
               )}
             </div>
           </div>
@@ -1261,16 +1195,6 @@ function ContentEditPage({
                 : selectedItem.content_mode && selectedItem.content_mode !== 'ai-generate'
                 ? `${pendingModeDescriptions[selectedItem.content_mode]}${selectedItem.content_mode === 'other' && selectedItem.content_mode_note ? ` ${selectedItem.content_mode_note}` : ''}`
                 : taskInFlight ? '如果该小节正在生成，模型返回内容后会实时显示在这里。' : paused ? '任务已暂停，可先导出当前内容或点击继续。' : '点击生成正文后，后台会按 AI 生成小节生成内容。'}</p>
-              {selectedItem.content_mode === 'template-fill' && (
-                <button type="button" className="primary-action" onClick={() => void startChapterModeTask('template-fill', [selectedItem.id])} disabled={taskBlocksGeneration}>
-                  填充模板
-                </button>
-              )}
-              {selectedItem.content_mode === 'point-to-point' && (
-                <button type="button" className="primary-action" onClick={() => void startChapterModeTask('point-to-point', [selectedItem.id])} disabled={taskBlocksGeneration}>
-                  生成应答表
-                </button>
-              )}
             </div>
           ) : (
             <div className="markdown-empty-state content-generation-empty">

@@ -1,12 +1,12 @@
 import type { AiHttpErrorPayload, ChatCompletionRequest, JsonCompletionRequest } from './ai';
 import type { DuplicateCheckWorkspacePatch, DuplicateCheckWorkspaceState, FileSelectionResult } from './bid';
 import type { ClientConfig, ConfigSaveResult, ImageModelTestResult, ModelInfoResult, ModelListResult, UpdateChannel } from './config';
-import type { KnowledgeAnalysisSnapshot, KnowledgeBaseEvent, KnowledgeBaseIndex, KnowledgeBaseIndexMutationResult, KnowledgeBaseMutationResult, KnowledgeBaseRetryDocumentResult, KnowledgeBaseStartMatchingResult, KnowledgeBaseUploadResult, KnowledgeDocument, KnowledgeFolder, KnowledgeItem, KnowledgeSearchRequest, KnowledgeSearchResult } from '../../features/knowledge-base/types';
+import type { KnowledgeAnalysisSnapshot, KnowledgeBaseEvent, KnowledgeBaseIndex, KnowledgeBaseIndexMutationResult, KnowledgeBaseMutationResult, KnowledgeBaseRetryDocumentResult, KnowledgeBaseStartMatchingResult, KnowledgeBaseUploadResult, KnowledgeDocument, KnowledgeFolder, KnowledgeItem } from '../../features/knowledge-base/types';
 import type { RejectionCheckWorkspacePatch, RejectionCheckWorkspaceState, RejectionDocumentRole } from '../../features/rejection-check/types';
 import type { BidAnalysisMode, BidAnalysisTaskState, BidSectionMode, ContentGenerationOptions, ContentGenerationPlanState, ContentGenerationProgressDetail, ContentGenerationRuntimeState, ContentGenerationSectionState, DetectedBidSection, GlobalFactGroupState, GlobalFactsMode, SaveOutlineRequest, SaveOutlineSelectionRequest, TechnicalPlanState, TechnicalPlanStep, TechnicalPlanWorkflowKind } from '../../features/technical-plan/types';
 import type { FeasibilityProjectInfo, FeasibilityReportState, FeasibilityReportStep, FeasibilitySaveOutlineRequest, FeasibilitySourceFile } from '../../features/feasibility-report/types';
 import type { ExportFormatConfig, ExportTemplateRecord } from './exportFormat';
-import type { OutlineData, OutlineExpansionMode, OutlineItem, OutlineMode, OutlineWordControlOptions } from './outline';
+import type { OutlineData, OutlineExpansionMode, OutlineMode, OutlineWordControlOptions } from './outline';
 
 export interface TaskEventTask {
   task_id: string;
@@ -51,13 +51,6 @@ export interface WordExportResult {
   path?: string;
   message?: string;
   warnings?: string[];
-}
-
-export interface CheckExcelExportResult {
-  success: boolean;
-  canceled?: boolean;
-  path?: string;
-  message?: string;
 }
 
 export interface RequiredOnlineServiceStatus {
@@ -583,7 +576,6 @@ export interface YibiaoBridge {
     readMarkdown: (documentId: string) => Promise<string>;
     readItems: (documentId: string) => Promise<KnowledgeItem[]>;
     readAnalysis: (documentId: string) => Promise<KnowledgeAnalysisSnapshot>;
-    search: (payload: KnowledgeSearchRequest) => Promise<KnowledgeSearchResult>;
     onEvent: (callback: (event: KnowledgeBaseEvent) => void) => () => void;
   };
   technicalPlan: {
@@ -617,16 +609,6 @@ export interface YibiaoBridge {
     saveOutlineConfig: (payload: { referenceKnowledgeDocumentIds: string[]; outlineMode?: OutlineMode; outlineExpansionMode?: OutlineExpansionMode; wordControlOptions: OutlineWordControlOptions }) => Promise<void>;
     saveOutlineSelection: (payload: SaveOutlineSelectionRequest) => Promise<{ success: boolean }>;
     saveOutline: (payload: SaveOutlineRequest) => Promise<Partial<TechnicalPlanState>>;
-    importOutlineDocument: (filePaths?: string[]) => Promise<{
-      success: boolean;
-      canceled?: boolean;
-      message?: string;
-      fileName?: string;
-      outline?: OutlineItem[];
-      warnings?: string[];
-      truncated?: boolean;
-    }>;
-    exportMarkdown: (payload: { content: string; defaultFileName?: string; title?: string }) => Promise<CheckExcelExportResult>;
     saveGlobalFactsConfig: (payload: { globalFactsMode: GlobalFactsMode }) => Promise<Partial<TechnicalPlanState>>;
     saveGlobalFacts: (globalFacts: GlobalFactGroupState[]) => Promise<Partial<TechnicalPlanState>>;
     saveContentGenerationOptions: (options: ContentGenerationOptions) => Promise<Partial<TechnicalPlanState>>;
@@ -654,17 +636,15 @@ export interface YibiaoBridge {
     saveUiState: (payload: Partial<Pick<DuplicateCheckWorkspaceState, 'step' | 'activeAnalysisTab'>>) => Promise<void>;
     updateState: (partial: DuplicateCheckWorkspacePatch) => Promise<void>;
     clear: () => Promise<{ success: boolean; message?: string }>;
-    exportExcel: () => Promise<CheckExcelExportResult>;
   };
   rejectionCheck: {
     loadState: () => Promise<RejectionCheckWorkspaceState>;
     importDocument: (role: RejectionDocumentRole, filePaths?: string[]) => Promise<{ success: boolean; message?: string }>;
     importTenderFromTechnicalPlan: () => Promise<{ success: boolean; message?: string }>;
     removeDocument: (role: RejectionDocumentRole, documentId?: string) => Promise<void>;
-    saveUiState: (payload: Partial<Pick<RejectionCheckWorkspaceState, 'step' | 'activeDocumentTab' | 'activeResultTab' | 'activeCheckResultTab' | 'customCheckItems' | 'identityExtraKeywords' | 'checkOptions'>>) => Promise<void>;
+    saveUiState: (payload: Partial<Pick<RejectionCheckWorkspaceState, 'step' | 'activeDocumentTab' | 'activeResultTab' | 'activeCheckResultTab' | 'customCheckItems' | 'checkOptions'>>) => Promise<void>;
     updateState: (partial: RejectionCheckWorkspacePatch) => Promise<void>;
     clear: () => Promise<{ success: boolean; message?: string }>;
-    exportExcel: () => Promise<CheckExcelExportResult>;
   };
   templates: {
     list: () => Promise<ExportTemplateRecord[]>;
@@ -680,8 +660,6 @@ export interface YibiaoBridge {
     suppressOutlineSelectionAutoConfirmation: (payload: { taskId: string }) => Promise<{ success: boolean }>;
     startGlobalFactsGeneration: (payload: unknown) => Promise<unknown>;
     startContentGeneration: (payload: unknown) => Promise<unknown>;
-    startTemplateFill: (payload?: { nodeIds?: string[] }) => Promise<unknown>;
-    startPointToPoint: (payload?: { nodeIds?: string[] }) => Promise<unknown>;
     pauseContentGeneration: () => Promise<unknown>;
     startRejectionItemsExtraction: (payload: unknown) => Promise<unknown>;
     startRejectionCheck: (payload: unknown) => Promise<unknown>;

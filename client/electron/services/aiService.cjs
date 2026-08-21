@@ -1411,7 +1411,6 @@ async function testOpenAICompatibleImageModel(app, config, provider) {
     size: normalizeOpenAICompatibleImageSize(imageConfig),
     response_format: 'url',
     ...(requestMode === 'stream' ? { stream: true } : {}),
-    ...(provider === 'volcengine' ? { watermark: false } : {}),
   };
 
   try {
@@ -1611,7 +1610,6 @@ async function generateOpenAICompatibleImage(app, config, request, provider) {
     size: normalizeOpenAICompatibleImageSize(imageConfig, request.size),
     response_format: 'url',
     ...(requestMode === 'stream' ? { stream: true } : {}),
-    ...(provider === 'volcengine' ? { watermark: false } : {}),
   };
   const baseUrl = requireBaseUrl(imageConfig.base_url, `${meta.label} Base URL 缺失，请重新选择服务商后保存配置`);
   let responseData = null;

@@ -15,7 +15,6 @@ function registerKnowledgeBaseIpc({ knowledgeBaseService }) {
   ipcMain.handle('knowledge-base:read-markdown', (_event, documentId) => knowledgeBaseService.readMarkdown(documentId));
   ipcMain.handle('knowledge-base:read-items', (_event, documentId) => knowledgeBaseService.readItems(documentId));
   ipcMain.handle('knowledge-base:read-analysis', (_event, documentId) => knowledgeBaseService.readAnalysis(documentId));
-  ipcMain.handle('knowledge-base:search', (_event, payload) => knowledgeBaseService.search(payload));
 }
 
 module.exports = { registerKnowledgeBaseIpc };

@@ -1,7 +1,7 @@
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
-const { getBidAnalysisTaskById, getBidAnalysisTasks } = require('./bidAnalysisTask.cjs');
+const { getBidAnalysisTasks } = require('./bidAnalysisTask.cjs');
 const {
   getTechnicalPlanGeneratedIllustrationsDir,
   getTechnicalPlanIllustrationsDir,
@@ -72,8 +72,6 @@ const taskFieldTypes = {
   globalFactsTask: 'global-facts-generation',
   globalFactsAdjustmentTask: 'global-facts-adjustment',
   contentGenerationTask: 'content-generation',
-  templateFillTask: 'template-fill-generation',
-  pointToPointTask: 'point-to-point-generation',
 };
 
 const taskTypeFields = Object.fromEntries(Object.entries(taskFieldTypes).map(([field, type]) => [type, field]));
@@ -83,8 +81,6 @@ const originalPlanDownstreamTaskTypes = Object.freeze([
   'global-facts-generation',
   'global-facts-adjustment',
   'content-generation',
-  'template-fill-generation',
-  'point-to-point-generation',
 ]);
 
 function appendImportFailureParts(messageParts, errors) {
@@ -937,7 +933,7 @@ function createTechnicalPlanStore({ app, db, fileService, agentService, taskLogS
   }
 
   function getBidItemLabel(itemId, fallbackLabel) {
-    const task = getBidAnalysisTaskById(itemId);
+    const task = getBidAnalysisTasks('full').find((item) => item.id === itemId) || getBidAnalysisTasks('key').find((item) => item.id === itemId);
     return fallbackLabel || task?.label || itemId;
   }
 
@@ -1565,7 +1561,7 @@ function createTechnicalPlanStore({ app, db, fileService, agentService, taskLogS
     db.prepare("UPDATE technical_plan_outline_nodes SET content = '', updated_at = ?").run(now());
     db.prepare('DELETE FROM technical_plan_content_sections').run();
     db.prepare('DELETE FROM technical_plan_content_plans').run();
-    db.prepare("DELETE FROM technical_plan_tasks WHERE type IN ('content-generation', 'template-fill-generation', 'point-to-point-generation')").run();
+    db.prepare("DELETE FROM technical_plan_tasks WHERE type = 'content-generation'").run();
     clearContentIllustrationPlan();
     clearTechnicalPlanMermaidCache();
     updateMeta({ content_generation_runtime_json: null });
@@ -1651,9 +1647,9 @@ function createTechnicalPlanStore({ app, db, fileService, agentService, taskLogS
   }
 
   function assertOutlineMutationAllowed() {
-    const task = db.prepare("SELECT status FROM technical_plan_tasks WHERE type IN ('content-generation', 'template-fill-generation', 'point-to-point-generation') AND status IN ('running', 'pausing', 'paused') LIMIT 1").get();
-    if (task) {
-      throw new Error('正文或模板任务正在运行或暂停中，请结束后再调整目录');
+    const task = db.prepare("SELECT status FROM technical_plan_tasks WHERE type = 'content-generation'").get();
+    if (['running', 'pausing', 'paused'].includes(task?.status)) {
+      throw new Error('正文生成任务正在运行或暂停中，请结束后再调整目录');
     }
   }
 
@@ -2097,21 +2093,12 @@ function createTechnicalPlanStore({ app, db, fileService, agentService, taskLogS
       saveOutlineData(outlineToSave);
       if (!outlineToSave?.outline?.length) {
         updateMeta({ outline_word_control_snapshot_json: null });
-      } else if (reason === 'replace') {
-        const meta = readMetaRow();
-        const shouldPersistWordControlSnapshot = Boolean(request.persistWordControlSnapshot) || !meta.outline_word_control_snapshot_json;
-        if (shouldPersistWordControlSnapshot) {
-          const wordControlSnapshot = normalizeOutlineWordControlOptions(
-            safeJsonParse(meta.outline_word_control_options_json, defaultOutlineWordControlOptions),
-          );
-          updateMeta({ outline_word_control_snapshot_json: JSON.stringify(wordControlSnapshot) });
-        }
       }
       const rows = flattenOutlineItems(outlineToSave?.outline || []);
       const nextIds = new Set(rows.map((row) => row.node_id));
       restoreMappedContentRows({ snapshot, idMap, affectedIds, nextIds, clearAll });
       if (invalidatesContentTask) {
-        db.prepare("DELETE FROM technical_plan_tasks WHERE type IN ('content-generation', 'template-fill-generation', 'point-to-point-generation')").run();
+        db.prepare("DELETE FROM technical_plan_tasks WHERE type = 'content-generation'").run();
         clearTechnicalPlanMermaidCache();
         updateMeta({ content_generation_runtime_json: null });
       }
@@ -2122,14 +2109,8 @@ function createTechnicalPlanStore({ app, db, fileService, agentService, taskLogS
       ? safeJsonParse(readMetaRow().content_generation_runtime_json, undefined)
       : undefined;
     const sortedContentTask = reason === 'sort' ? loadTask('content-generation') : undefined;
-    const savedMeta = readMetaRow();
     return {
       outlineData: savedOutlineData,
-      ...(reason === 'replace' ? {
-        outlineWordControlSnapshot: savedMeta.outline_word_control_snapshot_json
-          ? normalizeOutlineWordControlOptions(safeJsonParse(savedMeta.outline_word_control_snapshot_json, defaultOutlineWordControlOptions))
-          : undefined,
-      } : {}),
       contentIllustrationPlan: reason === 'sort' ? savedIllustrationPlan : undefined,
       ...(reason === 'sort' ? {
         contentGenerationTask: sortedContentTask,
@@ -2138,8 +2119,6 @@ function createTechnicalPlanStore({ app, db, fileService, agentService, taskLogS
       ...(invalidatesContentTask ? {
         contentGenerationTask: undefined,
         contentGenerationRuntime: undefined,
-        templateFillTask: undefined,
-        pointToPointTask: undefined,
       } : {}),
     };
   }

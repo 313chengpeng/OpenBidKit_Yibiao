@@ -115,27 +115,3 @@ export interface KnowledgeBaseUploadResult {
 export interface KnowledgeBaseEvent {
   document: KnowledgeDocument;
 }
-
-export type KnowledgeSearchHitType = 'document' | 'item' | 'block';
-
-export interface KnowledgeSearchHit {
-  type: KnowledgeSearchHitType;
-  documentId: string;
-  folderId: string;
-  folderName: string;
-  fileName: string;
-  itemId?: string;
-  blockId?: string;
-  title: string;
-  snippet: string;
-}
-
-export interface KnowledgeSearchRequest {
-  query: string;
-  folderId?: string;
-  limit?: number;
-}
-
-export interface KnowledgeSearchResult {
-  results: KnowledgeSearchHit[];
-}

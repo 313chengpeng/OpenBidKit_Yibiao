@@ -42,76 +42,8 @@
 .knowledge-toolbar-actions {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
   gap: 8px;
   justify-content: flex-end;
-}
-
-.knowledge-search-input {
-  width: min(320px, 42vw);
-  height: 38px;
-  padding: 0 12px;
-  color: var(--yb-text);
-  font-size: 13px;
-  background: #ffffff;
-  border: 1px solid var(--yb-border-soft);
-  border-radius: var(--yb-radius-md);
-  outline: none;
-}
-
-.knowledge-search-input:focus {
-  border-color: rgba(33, 116, 253, 0.5);
-  box-shadow: var(--yb-focus-ring);
-}
-
-.knowledge-search-results {
-  display: grid;
-  align-content: start;
-  gap: 8px;
-  min-height: 0;
-  overflow: auto;
-  padding: 12px;
-}
-
-.knowledge-search-hit {
-  display: grid;
-  justify-items: start;
-  gap: 4px;
-  padding: 12px 14px;
-  text-align: left;
-  color: inherit;
-  background: var(--yb-bg);
-  border: 1px solid var(--yb-border-soft);
-  border-radius: var(--yb-radius-md);
-  cursor: pointer;
-}
-
-.knowledge-search-hit:hover {
-  border-color: rgba(33, 116, 253, 0.28);
-  box-shadow: 0 8px 20px rgba(33, 116, 253, 0.08);
-}
-
-.knowledge-search-hit-type {
-  color: var(--yb-primary);
-  font-size: 11px;
-  font-weight: 800;
-}
-
-.knowledge-search-hit strong {
-  color: var(--yb-text);
-  font-size: 14px;
-}
-
-.knowledge-search-hit small,
-.knowledge-search-hit p {
-  margin: 0;
-  color: var(--yb-text-muted);
-  font-size: 12px;
-}
-
-.knowledge-item-card.is-focused {
-  border-color: rgba(33, 116, 253, 0.42);
-  box-shadow: 0 0 0 3px rgba(33, 116, 253, 0.12);
 }
 
 .knowledge-toolbar-actions .secondary-action.is-active {

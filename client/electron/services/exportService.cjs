@@ -9,14 +9,9 @@ const { getMermaidCacheEntry, saveMermaidCacheImage } = require('../utils/mermai
 const { getGeneratedImagesDir, getImportedImagesDir } = require('../utils/paths.cjs');
 const { REMOTE_IMAGE_RETRY_ATTEMPTS, REMOTE_IMAGE_RETRY_DELAY_MS } = require('../utils/remoteImageRetry.cjs');
 const { renderMarkdownHtml } = require('../utils/renderMarkdownHtml.cjs');
-const {
-  applyTextNormalization,
-  applyTextNormalizationToMarkdown,
-} = require('../utils/textNormalization.cjs');
 const { getLocalImageRenderService } = require('./localImageRenderService.cjs');
 const {
   AlignmentType,
-  Bookmark,
   BorderStyle,
   Document,
   ExternalHyperlink,
@@ -28,16 +23,14 @@ const {
   LevelFormat,
   LevelSuffix,
   Packer,
-  PageBreak,
   PageNumber,
+  PageBreak,
   PageOrientation,
-  PageReference,
   Paragraph,
   ShadingType,
   Table,
   TableCell,
   TableLayoutType,
-  TableOfContents,
   TableRow,
   TextRun,
   UnderlineType,
@@ -252,43 +245,6 @@ function cleanText(value) {
   return String(value || '').replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '');
 }
 
-function applyOutlineTextNormalization(items, options) {
-  if (!options?.chinese_quotes && !options?.strip_spaces) return items || [];
-  return (items || []).map((item) => ({
-    ...item,
-    title: applyTextNormalization(item.title, options),
-    description: applyTextNormalization(item.description, options),
-    content: applyTextNormalizationToMarkdown(item.content, options),
-    children: item.children?.length ? applyOutlineTextNormalization(item.children, options) : item.children,
-  }));
-}
-
-function outlineBookmarkId(nodeId) {
-  const raw = String(nodeId || '').trim();
-  if (!raw) return '';
-  return `outline-${raw.replace(/[^A-Za-z0-9_-]/g, '_')}`;
-}
-
-function splitExportTextParts(value) {
-  const text = String(value || '');
-  const parts = [];
-  const pattern = /\{\{page:outline-([^}]+)\}\}/g;
-  let lastIndex = 0;
-  let match = pattern.exec(text);
-  while (match) {
-    if (match.index > lastIndex) {
-      parts.push({ type: 'text', value: text.slice(lastIndex, match.index) });
-    }
-    parts.push({ type: 'pageRef', bookmarkId: outlineBookmarkId(match[1]) });
-    lastIndex = match.index + match[0].length;
-    match = pattern.exec(text);
-  }
-  if (lastIndex < text.length) {
-    parts.push({ type: 'text', value: text.slice(lastIndex) });
-  }
-  return parts;
-}
-
 function normalizeDocxColor(value, fallback = '536176') {
   const raw = String(value || '').trim().replace(/^#/, '');
   if (/^[0-9a-f]{6}$/i.test(raw)) return raw.toUpperCase();
@@ -316,23 +272,16 @@ function lineBreakRun() {
 }
 
 function textRunsWithBreaks(value, options = {}) {
+  const parts = String(value || '').split(/<br\s*\/?\s*>/gi);
   const runs = [];
-  splitExportTextParts(value).forEach((segment) => {
-    if (segment.type === 'pageRef') {
-      if (segment.bookmarkId) {
-        runs.push(new PageReference(segment.bookmarkId, { hyperlink: true }));
-      }
-      return;
+
+  parts.forEach((part, index) => {
+    if (index > 0) {
+      runs.push(lineBreakRun());
     }
-    const parts = String(segment.value || '').split(/<br\s*\/?\s*>/gi);
-    parts.forEach((part, index) => {
-      if (index > 0) {
-        runs.push(lineBreakRun());
-      }
-      if (part) {
-        runs.push(textRun(part, options));
-      }
-    });
+    if (part) {
+      runs.push(textRun(part, options));
+    }
   });
 
   return runs;
@@ -2073,27 +2022,7 @@ function buildOutlineHeadingParagraph(item, context, level, options = {}) {
     paraOptions.numbering = { reference: HEADING_NUMBERING_REFERENCE, level: Math.min(level - 1, 5) };
   }
 
-  const bookmarkId = outlineBookmarkId(item.id);
-  const headingRun = textRun(displayTitle, runOptions);
-  return paragraph(
-    bookmarkId ? [new Bookmark({ id: bookmarkId, children: [headingRun] })] : [headingRun],
-    paraOptions,
-  );
-}
-
-function buildTableOfContentsChildren(context) {
-  if (!context.exportFormat?.include_table_of_contents) return [];
-  if (context.exportFormat?.heading_border?.enabled) {
-    addWarning(context, '当前章节框线会影响目录，建议先关闭框线。');
-  }
-  return [
-    paragraph([textRun('目录', { bold: true, size: 32 })], { alignment: AlignmentType.CENTER, after: 200 }),
-    new TableOfContents('目录', {
-      hyperlink: true,
-      headingStyleRange: '1-6',
-    }),
-    paragraph([textRun('')], { after: 200 }),
-  ];
+  return paragraph([textRun(displayTitle, runOptions)], paraOptions);
 }
 
 async function addChapterFrameRows(rows, items, context, level = 1) {
@@ -2369,14 +2298,11 @@ async function buildDocxResult(payload, options = {}) {
   if (feasibility?.includeNotes) {
     children.push(...buildFeasibilityNotesParagraphs(payload, feasibility));
   }
-  children.push(...buildTableOfContentsChildren(context));
-
-  const outlineItems = applyOutlineTextNormalization(payload.outline || [], exportFormat?.text_normalization);
 
   reportProgress(context, 10, stats.mermaidCount
     ? `准备导出正文，并转换 ${stats.mermaidCount} 张 Mermaid 图。`
     : '准备导出正文。');
-  await addOutlineItems(children, outlineItems, context);
+  await addOutlineItems(children, payload.outline || [], context);
   if (feasibility?.includeAppendix) {
     children.push(...buildFeasibilityAppendixParagraphs(feasibility));
   }
@@ -2425,9 +2351,6 @@ async function buildDocxResult(payload, options = {}) {
     ...(firstPageDifferent ? { titlePage: true } : {}),
   };
   const doc = new Document({
-    features: {
-      updateFields: true,
-    },
     ...(numbering ? { numbering } : {}),
     styles: {
       default: {
