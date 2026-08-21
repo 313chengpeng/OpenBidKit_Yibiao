@@ -2,6 +2,12 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const { getKnowledgeBaseDir } = require('../utils/paths.cjs');
+const {
+  removeDocumentSearch,
+  reindexDocumentSearch,
+  syncDocumentSearchMeta,
+  searchKnowledge,
+} = require('./knowledgeSearchIndex.cjs');
 
 const documentStatuses = ['pending', 'copying', 'converting', 'extracting', 'ready_for_matching', 'matching', 'recovering', 'analyzing', 'saving', 'success', 'error'];
 const documentStepKeys = ['copy_source', 'convert_markdown', 'build_blocks', 'extract_first_items', 'extract_supplement_items', 'merge_candidates', 'match_batches', 'recover_missing', 'save_result'];
@@ -239,6 +245,7 @@ function createKnowledgeBaseStore({ app, db }) {
         sort_order = excluded.sort_order,
         updated_at = excluded.updated_at
     `).run(values);
+    syncDocumentSearchMeta(db, values.document_id);
     return documentFromRow(values);
   }
 
@@ -323,13 +330,24 @@ function createKnowledgeBaseStore({ app, db }) {
   function deleteFolder(folderId) {
     const folder = db.prepare('SELECT * FROM knowledge_folders WHERE folder_id = ?').get(folderId);
     if (!folder) throw new Error('知识库文件夹不存在');
-    db.prepare('DELETE FROM knowledge_folders WHERE folder_id = ?').run(folderId);
+    const documentIds = db.prepare('SELECT document_id FROM knowledge_documents WHERE folder_id = ?').all(folderId).map((row) => row.document_id);
+    const transaction = db.transaction(() => {
+      for (const documentId of documentIds) {
+        removeDocumentSearch(db, documentId);
+      }
+      db.prepare('DELETE FROM knowledge_folders WHERE folder_id = ?').run(folderId);
+    });
+    transaction();
     return folderFromRow(folder);
   }
 
   function deleteDocument(documentId) {
     const document = getDocument(documentId);
-    db.prepare('DELETE FROM knowledge_documents WHERE document_id = ?').run(documentId);
+    const transaction = db.transaction(() => {
+      removeDocumentSearch(db, documentId);
+      db.prepare('DELETE FROM knowledge_documents WHERE document_id = ?').run(documentId);
+    });
+    transaction();
     return document;
   }
 
@@ -435,6 +453,7 @@ function createKnowledgeBaseStore({ app, db }) {
       resequenceDocumentIds(targetFolderId, nextTargetIds, timestamp);
     });
     transaction();
+    syncDocumentSearchMeta(db, documentId);
     return {
       ...document,
       folder_id: targetFolderId,
@@ -497,6 +516,9 @@ function createKnowledgeBaseStore({ app, db }) {
       RETURNING *
     `).get(values);
     if (!row) throw new Error('知识库文档不存在');
+    if (hasOwn(partial, 'file_name') || hasOwn(partial, 'fileName') || hasOwn(partial, 'folder_id') || hasOwn(partial, 'folderId')) {
+      syncDocumentSearchMeta(db, documentId);
+    }
     return documentFromRow(row);
   }
 
@@ -553,6 +575,7 @@ function createKnowledgeBaseStore({ app, db }) {
       });
     });
     writeDocumentUpdate(documentId, { block_count: Array.isArray(blocks) ? blocks.length : 0, filtered_block_count: Array.isArray(filteredBlocks) ? filteredBlocks.length : 0 });
+    reindexDocumentSearch(db, documentId);
   }
 
   const saveBlocksTransaction = db.transaction(replaceBlocks);
@@ -733,6 +756,7 @@ function createKnowledgeBaseStore({ app, db }) {
         discarded_block_count: Number((report || matchResult?.report)?.discarded_blocks_count || 0),
         system_discarded_after_retry_count: Number((report || matchResult?.report)?.system_discarded_after_retry_count || 0),
       });
+      reindexDocumentSearch(db, documentId);
     });
     transaction();
   }
@@ -950,6 +974,7 @@ function createKnowledgeBaseStore({ app, db }) {
         Object.assign(resetFields, { item_count: 0, discarded_block_count: 0, system_discarded_after_retry_count: 0 });
       }
       writeDocumentUpdate(documentId, resetFields);
+      reindexDocumentSearch(db, documentId);
     });
     transaction();
   }
@@ -1135,6 +1160,7 @@ function createKnowledgeBaseStore({ app, db }) {
     readItems,
     readAnalysis,
     getOutlineReferences,
+    search: (payload) => searchKnowledge(db, payload),
     resolvePath,
   };
 }

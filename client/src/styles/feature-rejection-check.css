@@ -164,6 +164,36 @@
   height: 100%;
 }
 
+.rejection-identity-extra-panel {
+  display: grid;
+  min-height: 0;
+  height: 100%;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 16px;
+}
+
+.rejection-identity-checklist {
+  padding: 12px 14px;
+  border: 1px solid rgba(228, 233, 240, 0.88);
+  border-radius: var(--yb-radius-md);
+  background: rgba(248, 250, 252, 0.9);
+}
+
+.rejection-identity-checklist strong {
+  display: block;
+  margin-bottom: 8px;
+}
+
+.rejection-identity-checklist ul {
+  margin: 0;
+  padding-left: 1.2em;
+  color: var(--yb-muted, #536176);
+}
+
+.rejection-identity-checklist li + li {
+  margin-top: 4px;
+}
+
 .rejection-check-result-panel {
   display: grid;
   height: 100%;

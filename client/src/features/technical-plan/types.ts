@@ -6,7 +6,7 @@ export type BidAnalysisMode = 'key' | 'full' | 'custom';
 export type BidAnalysisTaskStatus = 'idle' | 'running' | 'success' | 'error';
 export type BidSectionMode = 'single' | 'multiple';
 export type BidSectionExtractionStatus = 'idle' | 'running' | 'success' | 'error';
-export type BackgroundTaskType = 'bid-section-extraction' | 'bid-analysis' | 'outline-generation' | 'outline-adjustment' | 'global-facts-generation' | 'global-facts-adjustment' | 'content-generation';
+export type BackgroundTaskType = 'bid-section-extraction' | 'bid-analysis' | 'outline-generation' | 'outline-adjustment' | 'global-facts-generation' | 'global-facts-adjustment' | 'content-generation' | 'template-fill-generation' | 'point-to-point-generation';
 export type BackgroundTaskStatus = 'running' | 'pausing' | 'paused' | 'success' | 'error';
 export type ContentGenerationSectionStatus = 'idle' | 'running' | 'success' | 'error' | 'ignored';
 export type ContentGenerationPhase = 'planning' | 'restoring' | 'generating' | 'section-word-adjusting' | 'original-auditing' | 'auditing' | 'table-cleaning' | 'final-section-word-adjusting' | 'total-word-adjusting' | 'illustration-planning' | 'illustration-generating' | 'done';
@@ -22,6 +22,7 @@ export interface SaveOutlineRequest {
   reason: SaveOutlineReason;
   idMap?: Record<string, string>;
   affectedNodeIds?: string[];
+  persistWordControlSnapshot?: boolean;
 }
 
 export interface OutlineSelectionItem {
@@ -371,6 +372,8 @@ export interface TechnicalPlanState {
   globalFactsAdjustmentTask?: BackgroundTaskState;
   globalFacts: GlobalFactGroupState[];
   contentGenerationTask?: BackgroundTaskState;
+  templateFillTask?: BackgroundTaskState;
+  pointToPointTask?: BackgroundTaskState;
   contentGenerationOptions?: ContentGenerationOptions;
   contentGenerationSections: ContentGenerationSections;
   contentGenerationPlans: ContentGenerationPlans;

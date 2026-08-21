@@ -240,6 +240,11 @@ const defaultExportFormat = {
     caption_bold: false,
     caption_italic: false,
   },
+  text_normalization: {
+    chinese_quotes: false,
+    strip_spaces: false,
+  },
+  include_table_of_contents: false,
 };
 
 const defaultConfig = {
@@ -376,12 +381,21 @@ function normalizeComponentsConfig(source) {
   };
 }
 
+function allowsEditableBaseUrl(provider) {
+  return provider === 'custom' || provider === 'volcengine';
+}
+
+function resolvePersistedBaseUrl(provider, sourceBaseUrl, defaultBaseUrl) {
+  if (allowsEditableBaseUrl(provider)) {
+    return sourceBaseUrl !== undefined ? sourceBaseUrl : defaultBaseUrl;
+  }
+  return defaultBaseUrl;
+}
+
 function normalizeTextModelProfile(provider, profile) {
   const defaults = defaultTextModelProfiles[provider] || legacyTextModelProfiles[provider];
   const source = profile || {};
-  const sourceBaseUrl = provider === 'custom'
-    ? source.base_url !== undefined ? source.base_url : defaults.base_url
-    : defaults.base_url;
+  const sourceBaseUrl = resolvePersistedBaseUrl(provider, source.base_url, defaults.base_url);
   return {
     api_key: source.api_key !== undefined ? source.api_key : defaults.api_key,
     base_url: sourceBaseUrl,
@@ -412,9 +426,11 @@ function normalizeTextModelProfiles(sourceProfiles) {
 }
 
 function textProfileFromFlatConfig(source, fallback, provider) {
-  const sourceBaseUrl = provider === 'custom'
-    ? source.base_url !== undefined ? source.base_url : fallback.base_url
-    : fallback.base_url;
+  const sourceBaseUrl = resolvePersistedBaseUrl(
+    provider,
+    source.base_url !== undefined ? source.base_url : undefined,
+    fallback.base_url,
+  );
   return {
     api_key: source.api_key !== undefined ? source.api_key : fallback.api_key,
     base_url: sourceBaseUrl,
@@ -487,9 +503,7 @@ function normalizeImageModelProfile(provider, profile) {
   const useProviderDefaultImageModel = provider === 'jinlong' && !String(source.model_name ?? '').trim();
   return {
     provider,
-    base_url: provider === 'custom'
-      ? source.base_url !== undefined ? source.base_url : defaults.base_url
-      : defaults.base_url,
+    base_url: resolvePersistedBaseUrl(provider, source.base_url, defaults.base_url),
     api_key: source.api_key !== undefined ? source.api_key : defaults.api_key,
     model_name: useProviderDefaultImageModel ? defaults.model_name : source.model_name !== undefined ? source.model_name : defaults.model_name,
     image_size: normalizeImageSize(provider, useProviderDefaultImageModel ? defaults.image_size : source.image_size, defaults.image_size),
@@ -547,6 +561,8 @@ function cloneDefaultExportFormat(def = defaultExportFormat) {
       body_cell: { ...def.table.body_cell },
     },
     image: { ...def.image },
+    text_normalization: { ...def.text_normalization },
+    include_table_of_contents: def.include_table_of_contents,
   };
 }
 
@@ -661,6 +677,7 @@ function normalizeExportFormat(source) {
   };
 
   const image = normalizeImageStyle(source.image, def.image);
+  const srcNormalization = source.text_normalization && typeof source.text_normalization === 'object' ? source.text_normalization : {};
 
   return {
     template_name: typeof source.template_name === 'string' && source.template_name ? source.template_name : def.template_name,
@@ -671,6 +688,11 @@ function normalizeExportFormat(source) {
     body_text,
     table,
     image,
+    text_normalization: {
+      chinese_quotes: typeof srcNormalization.chinese_quotes === 'boolean' ? srcNormalization.chinese_quotes : def.text_normalization.chinese_quotes,
+      strip_spaces: typeof srcNormalization.strip_spaces === 'boolean' ? srcNormalization.strip_spaces : def.text_normalization.strip_spaces,
+    },
+    include_table_of_contents: typeof source.include_table_of_contents === 'boolean' ? source.include_table_of_contents : def.include_table_of_contents,
   };
 }
 

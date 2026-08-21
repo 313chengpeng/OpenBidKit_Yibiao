@@ -151,17 +151,38 @@ const tasks = [
   { id: 'discardedBids', label: '无效标与废标项', required: false, output: 'markdown', description: '投标无效、废标相关风险项。', prompt: buildInvalidBidAndRejectionItemsPrompt },
   { id: 'signingProcess', label: '合同授予与签订', required: false, output: 'json', description: '中标公示、合同签订、履约保证金和合同文本。', prompt: () => jsonTask('提取合同授予和签订流程', '提取中标公示、合同签订、履约保证金、合同文本等信息。', `{"bid_notice":"中标公示","contract_sign":"合同签订","performance_bond":"履约保证金","contract_text":"合同文本"}`) },
   { id: 'terminationCondition', label: '合同解除和终止', required: false, output: 'json', description: '违约解除、不可抗力、合同终止和争议解决。', prompt: () => jsonTask('提取合同解除和终止条件', '提取违约解除、不可抗力、合同终止、争议解决等信息。', `{"breach_termination":"违约解除","force_majeure":"不可抗力","contract_termination":"合同终止","dispute_resolution":"争议解决"}`) },
+  {
+    id: 'bidBriefing',
+    label: '项目简报',
+    required: false,
+    output: 'markdown',
+    description: '根据已解析项整理一页项目简报，不进入默认关键项。',
+    prompt: () => '任务：根据已解析成功的招标要点整理一页项目简报。',
+  },
 ];
 
+function isSelectableBidAnalysisTask(task) {
+  return task.id !== 'bidBriefing';
+}
+
+function createIdleBidAnalysisItem(task) {
+  return { id: task.id, label: task.label, status: 'idle', content: '' };
+}
+
+function shouldInvalidateBidBriefing(tasksToRun) {
+  return (Array.isArray(tasksToRun) ? tasksToRun : []).some((task) => task?.id && task.id !== 'bidBriefing');
+}
+
 function getBidAnalysisTasks(mode) {
-  return mode === 'full' ? tasks : tasks.filter((task) => task.required);
+  const selectable = tasks.filter(isSelectableBidAnalysisTask);
+  return mode === 'full' ? selectable : selectable.filter((task) => task.required);
 }
 
 function normalizeBidAnalysisTaskIds(taskIds) {
   const requestedIds = new Set((Array.isArray(taskIds) ? taskIds : [])
     .map((taskId) => String(taskId || '').trim())
     .filter(Boolean));
-  return tasks.filter((task) => requestedIds.has(task.id)).map((task) => task.id);
+  return tasks.filter((task) => isSelectableBidAnalysisTask(task) && requestedIds.has(task.id)).map((task) => task.id);
 }
 
 function normalizeBidAnalysisConfig(mode, selectedTaskIds) {
@@ -244,6 +265,42 @@ async function runBidAnalysisPromptTask({ aiService, fileContent, fileSegments, 
   });
 }
 
+function buildBidBriefingPrompt(currentTasks = {}) {
+  const sourceItems = tasks
+    .filter((task) => task.id !== 'bidBriefing')
+    .map((task) => currentTasks[task.id])
+    .filter((item) => item?.status === 'success' && String(item.content || '').trim());
+  const sourceText = sourceItems.length
+    ? sourceItems.map((item) => `## ${item.label}\n${String(item.content || '').trim()}`).join('\n\n')
+    : '暂无已成功解析项。';
+  return `任务：根据已解析成功的招标要点，整理一页项目简报。
+
+输出要求：
+1. 只输出 Markdown，不要代码块包裹。
+2. 用加粗标注黑体要点。
+3. 必须响应的事项前加 ★，评分重点前加 ▲。
+4. 单独列出废标风险、目录/响应文件要求、商务做什么、技术做什么。
+5. 不要编造未出现的信息；缺失写“未提及”。
+6. 控制在一页可读范围内。
+
+已解析要点：
+${sourceText}`;
+}
+
+async function runBidBriefingPromptTask({ aiService, currentTasks, sectionHint }) {
+  const messages = [
+    { role: 'system', content: stableSystemPrompt },
+  ];
+  if (sectionHint) {
+    messages.push({ role: 'system', content: sectionHint });
+  }
+  messages.push({ role: 'user', content: buildBidBriefingPrompt(currentTasks) });
+  return aiService.chat({
+    messages,
+    logTitle: '招标解析-项目简报',
+  });
+}
+
 function runInvalidBidAndRejectionItemsExtraction({ aiService, fileContent, sectionHint }) {
   const task = getBidAnalysisTaskById('discardedBids');
   if (!task) {
@@ -257,7 +314,7 @@ async function runBidAnalysisTask({ aiService, workspaceStore, updateTask, check
   const config = normalizeBidAnalysisConfig(payload.mode, payload.selected_task_ids || payload.selectedTaskIds);
   const mode = config.mode;
   const selectedTaskIdSet = new Set(config.taskIds);
-  const selectedTasks = tasks.filter((task) => selectedTaskIdSet.has(task.id));
+  const selectedTasks = tasks.filter((task) => selectedTaskIdSet.has(task.id) && isSelectableBidAnalysisTask(task));
   const fileContent = workspaceStore.readTenderMarkdown();
   if (!String(fileContent || '').trim()) {
     throw new Error('请先上传招标文件，再开始解析');
@@ -288,15 +345,23 @@ async function runBidAnalysisTask({ aiService, workspaceStore, updateTask, check
   const requestedTaskIds = Array.isArray(payload.task_ids)
     ? new Set(payload.task_ids.filter((taskId) => typeof taskId === 'string'))
     : null;
-  const scopedTasks = requestedTaskIds
+  const briefingRequested = Boolean(requestedTaskIds?.has('bidBriefing'));
+  const briefingOnly = briefingRequested && [...requestedTaskIds].every((taskId) => taskId === 'bidBriefing');
+  let scopedTasks = requestedTaskIds
     ? selectedTasks.filter((task) => requestedTaskIds.has(task.id))
     : selectedTasks;
+  if (briefingRequested && !scopedTasks.some((task) => task.id === 'bidBriefing')) {
+    const briefingTask = getBidAnalysisTaskById('bidBriefing');
+    if (briefingTask) scopedTasks = [...scopedTasks, briefingTask];
+  }
   if (requestedTaskIds && scopedTasks.length === 0) {
     throw new Error('未找到可重新解析的招标文件解析项');
   }
   function doneProgress(nextTasks) {
-    const done = selectedTasks.filter((task) => ['success', 'error'].includes(nextTasks[task.id]?.status)).length;
-    return Math.round((done / selectedTasks.length) * 100);
+    const tracked = briefingOnly ? scopedTasks : selectedTasks;
+    if (!tracked.length) return 0;
+    const done = tracked.filter((task) => ['success', 'error'].includes(nextTasks[task.id]?.status)).length;
+    return Math.round((done / tracked.length) * 100);
   }
 
   function getMissingRequiredTasks(nextTasks) {
@@ -315,7 +380,7 @@ async function runBidAnalysisTask({ aiService, workspaceStore, updateTask, check
   if (forceRerun && !requestedTaskIds) {
     const resetTasks = {};
     for (const task of selectedTasks) {
-      const resetTask = { id: task.id, label: task.label, status: 'idle', content: '' };
+      const resetTask = createIdleBidAnalysisItem(task);
       currentTasks[task.id] = resetTask;
       resetTasks[task.id] = resetTask;
     }
@@ -341,12 +406,26 @@ async function runBidAnalysisTask({ aiService, workspaceStore, updateTask, check
       },
     };
   }
+  const tasksToRun = requestedTaskIds || forceRerun ? scopedTasks : scopedTasks.filter((task) => currentTasks[task.id]?.status !== 'success');
+  if (shouldInvalidateBidBriefing(tasksToRun)) {
+    const briefingTask = getBidAnalysisTaskById('bidBriefing');
+    if (briefingTask) {
+      const resetBriefing = createIdleBidAnalysisItem(briefingTask);
+      currentTasks[briefingTask.id] = resetBriefing;
+      initialPartial = {
+        ...initialPartial,
+        bidAnalysisTasks: {
+          ...(initialPartial.bidAnalysisTasks || {}),
+          [briefingTask.id]: resetBriefing,
+        },
+      };
+    }
+  }
   checkpointTask(
     { status: 'running', progress: 0, logs: initialLogs },
     initialPartial,
     initialEventPatch,
   );
-  const tasksToRun = requestedTaskIds || forceRerun ? scopedTasks : scopedTasks.filter((task) => currentTasks[task.id]?.status !== 'success');
 
   function checkpointBidItem(taskPartial, item, progress, technicalPlanPatch = {}) {
     checkpointTask(
@@ -366,13 +445,15 @@ async function runBidAnalysisTask({ aiService, workspaceStore, updateTask, check
       runningProgress,
     );
 
-    const content = await runBidAnalysisPromptTask({
-      aiService,
-      fileContent,
-      fileSegments,
-      task,
-      sectionHint,
-    });
+    const content = task.id === 'bidBriefing'
+      ? await runBidBriefingPromptTask({ aiService, currentTasks, sectionHint })
+      : await runBidAnalysisPromptTask({
+        aiService,
+        fileContent,
+        fileSegments,
+        task,
+        sectionHint,
+      });
     const trimmedContent = String(content || '').trim();
     if (!trimmedContent) {
       throw new Error(`${task.label}解析结果为空，请重新解析`);
@@ -428,7 +509,7 @@ async function runBidAnalysisTask({ aiService, workspaceStore, updateTask, check
   }
   await Promise.all(remainingTasks.map(runOneSafely));
 
-  const missingRequiredTasks = getMissingRequiredTasks(currentTasks);
+  const missingRequiredTasks = briefingOnly ? [] : getMissingRequiredTasks(currentTasks);
   if (missingRequiredTasks.length) {
     const missingLabels = missingRequiredTasks.map((task) => task.label).join('、');
     const message = `必填解析项未完成：${missingLabels}，请重新解析失败项。`;
@@ -448,4 +529,5 @@ module.exports = {
   runBidAnalysisTask,
   runBidAnalysisPromptTask,
   runSingleBidAnalysisPromptTask,
+  shouldInvalidateBidBriefing,
 };

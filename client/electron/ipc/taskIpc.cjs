@@ -29,6 +29,14 @@ function registerTaskIpc({ taskService }) {
     taskService.subscribe(event.sender);
     return taskService.startContentGeneration(payload);
   });
+  ipcMain.handle('tasks:start-template-fill', (event, payload) => {
+    taskService.subscribe(event.sender);
+    return taskService.startTemplateFill(payload);
+  });
+  ipcMain.handle('tasks:start-point-to-point', (event, payload) => {
+    taskService.subscribe(event.sender);
+    return taskService.startPointToPoint(payload);
+  });
   ipcMain.handle('tasks:pause-content-generation', (event) => {
     taskService.subscribe(event.sender);
     return taskService.pauseContentGeneration();

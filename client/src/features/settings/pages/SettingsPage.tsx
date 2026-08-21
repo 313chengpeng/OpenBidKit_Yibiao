@@ -144,9 +144,21 @@ function parseTextTemperatureInput(value: string): number {
   return normalizeTextTemperature(value);
 }
 
+function allowsEditableBaseUrl(provider: string): boolean {
+  return provider === 'custom' || provider === 'volcengine';
+}
+
+function resolvePersistedBaseUrl(provider: string, profileBaseUrl?: string, defaultBaseUrl = ''): string {
+  return allowsEditableBaseUrl(provider) ? profileBaseUrl ?? defaultBaseUrl : defaultBaseUrl;
+}
+
+function getVolcengineBaseUrlHint() {
+  return '火山方舟订阅套餐请填 https://ark.cn-beijing.volces.com/api/plan/v3；后付费才是 /api/v3。';
+}
+
 function normalizeTextModelProfile(provider: ConfiguredTextModelProvider, profile?: Partial<TextModelConfig>): TextModelConfig {
   const defaults = textProviderDefaults[provider];
-  const baseUrl = provider === 'custom' ? profile?.base_url ?? defaults.base_url : defaults.base_url;
+  const baseUrl = resolvePersistedBaseUrl(provider, profile?.base_url, defaults.base_url);
   return {
     api_key: profile?.api_key ?? defaults.api_key,
     base_url: baseUrl,
@@ -179,7 +191,7 @@ function normalizeTextModelProfiles(
 function textProfileFromState(textModel: SettingsPageState['textModel']): TextModelConfig {
   return {
     api_key: textModel.api_key,
-    base_url: textModel.provider === 'custom' ? textModel.base_url : textProviderDefaults[textModel.provider].base_url,
+    base_url: resolvePersistedBaseUrl(textModel.provider, textModel.base_url, textProviderDefaults[textModel.provider].base_url),
     model_name: textModel.model_name,
     reasoning_effort: textModel.reasoning_effort.trim(),
     context_length_limit: normalizeTextContextLengthLimit(textModel.context_length_limit),
@@ -311,7 +323,7 @@ const imageProviderLabels: Record<ImageModelProvider, string> = {
 
 function getImageBaseUrlDescription(provider: ImageModelProvider) {
   if (provider === 'jinlong') return '金龙中转站 OpenAI 兼容接口地址';
-  if (provider === 'volcengine') return '火山方舟 OpenAI 兼容接口地址';
+  if (provider === 'volcengine') return `火山方舟 OpenAI 兼容接口地址。${getVolcengineBaseUrlHint()}`;
   if (provider === 'agnes') return 'Agnes AI OpenAI 兼容接口地址';
   if (provider === 'custom') return '填写兼容 OpenAI /images/generations 的接口地址';
   return 'Google Gemini API REST 地址';
@@ -353,7 +365,7 @@ function normalizeImageModelProfile(provider: ImageModelProvider, profile?: Part
   const useProviderDefaultImageModel = provider === 'jinlong' && !String(profile?.model_name ?? '').trim();
   return {
     provider,
-    base_url: provider === 'custom' ? profile?.base_url ?? defaults.base_url : defaults.base_url,
+    base_url: resolvePersistedBaseUrl(provider, profile?.base_url, defaults.base_url),
     api_key: profile?.api_key ?? defaults.api_key,
     model_name: useProviderDefaultImageModel ? defaults.model_name : profile?.model_name ?? defaults.model_name,
     image_size: normalizeImageSize(provider, useProviderDefaultImageModel ? defaults.image_size : profile?.image_size ?? defaults.image_size),
@@ -429,7 +441,11 @@ function normalizeImageModelProfiles(profiles?: Partial<ImageModelProfiles>): Im
 function imageProfileFromState(imageModel: SettingsPageState['imageModel']): ImageModelConfig {
   return {
     provider: imageModel.provider,
-    base_url: imageModel.provider === 'custom' ? imageModel.base_url || '' : imageProviderDefaults[imageModel.provider].base_url,
+    base_url: resolvePersistedBaseUrl(
+      imageModel.provider,
+      imageModel.base_url || '',
+      imageProviderDefaults[imageModel.provider].base_url,
+    ),
     api_key: imageModel.api_key,
     model_name: imageModel.model_name,
     image_size: normalizeImageSize(imageModel.provider, imageModel.image_size),
@@ -1687,7 +1703,7 @@ function SettingsPage({ onDeveloperModeChange }: SettingsPageProps) {
             <label className="settings-row">
               <div className="settings-row-copy">
                 <strong>服务提供商</strong>
-                <span>选择服务商会自动使用预置 Base URL；只有自定义服务商允许修改</span>
+                <span>选择服务商会自动填入预置 Base URL。火山方舟和自定义允许修改。{getVolcengineBaseUrlHint()}</span>
               </div>
               <select
                 value={state.textModel.provider}
@@ -1704,14 +1720,14 @@ function SettingsPage({ onDeveloperModeChange }: SettingsPageProps) {
             <label className="settings-row">
               <div className="settings-row-copy">
                 <strong>Base URL</strong>
-                <span>OpenAI Like 接口地址，用于文本生成和分析任务</span>
+                <span>{state.textModel.provider === 'volcengine' ? getVolcengineBaseUrlHint() : 'OpenAI Like 接口地址，用于文本生成和分析任务'}</span>
               </div>
               <input
                 type="text"
                 value={state.textModel.base_url}
                 placeholder={currentTextProviderDefault.base_url || '例如 https://api.openai.com/v1'}
                 onChange={(event) => updateTextModelConfig({ base_url: event.target.value }, { clearModels: true })}
-                disabled={state.textModel.provider !== 'custom'}
+                disabled={!allowsEditableBaseUrl(state.textModel.provider)}
               />
             </label>
             <label className="settings-row">
@@ -1921,7 +1937,7 @@ function SettingsPage({ onDeveloperModeChange }: SettingsPageProps) {
                 value={state.imageModel.base_url || ''}
                 placeholder={state.imageModel.provider === 'custom' ? 'https://api.example.com/v1' : imageProviderDefaults[state.imageModel.provider].base_url}
                 onChange={(event) => updateImageModelConfig({ base_url: event.target.value }, { clearModels: true })}
-                disabled={state.imageModel.provider !== 'custom'}
+                disabled={!allowsEditableBaseUrl(state.imageModel.provider)}
               />
             </label>
             <label className="settings-row">
