@@ -11,7 +11,7 @@ test('独立成册模式直接以技术评分大项作为一级目录', () => {
   const prompt = createInitialPrompt('按响应文件要求生成。', { standaloneTechnical: true });
 
   assert.match(prompt, /一级目录必须直接对应技术评分大项/);
-  assert.match(prompt, /不得创建“技术方案”“监理大纲”/);
+  assert.match(prompt, /不得创建“技术方案”“项目管理方案”“监理大纲”“监理大纲（暗标）”“施工组织设计”“技术标”/);
   assert.match(prompt, /不得加入商务、资信、投标函、授权委托书/);
 });
 
@@ -20,6 +20,7 @@ test('独立成册评分规划把根节点固定为评分项层级', () => {
 
   assert.match(prompt, /score_item_level 固定为 1/);
   assert.match(prompt, /target_title 必须与 root_title 完全一致/);
+  assert.match(prompt, /不得再创建“技术方案”“项目管理方案”“监理大纲”“监理大纲（暗标）”“施工组织设计”“技术标”/);
 });
 
 test('独立成册生成子目录时不重复评分项根标题', () => {
