@@ -614,6 +614,7 @@ export interface YibiaoBridge {
     saveContentGenerationOptions: (options: ContentGenerationOptions) => Promise<Partial<TechnicalPlanState>>;
     saveChapterContent: (payload: { nodeId: string; content: string }) => Promise<Partial<TechnicalPlanState>>;
     clear: () => Promise<{ success: boolean; message?: string }>;
+    openBidTemplate: () => Promise<{ success: boolean; message?: string }>;
   };
   feasibilityReport: {
     loadState: () => Promise<FeasibilityReportState>;
