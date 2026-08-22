@@ -157,8 +157,9 @@ function normalizeImageRequestMode(imageConfig) {
 }
 
 function normalizeOpenAICompatibleImageSize(imageConfig, requestSize) {
-  const size = String(requestSize || imageConfig?.image_size || '1024x1024').trim();
-  return size || '1024x1024';
+  const requested = String(requestSize || '').trim();
+  const configured = String(imageConfig?.image_size || '').trim();
+  return requested || configured || '1024x1024';
 }
 
 function normalizeGoogleImageSize(imageConfig) {
@@ -1781,22 +1782,38 @@ function sleepMs(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+const COMFYUI_MIN_IMAGE_DIMENSION = 64;
+const COMFYUI_MAX_IMAGE_DIMENSION = 8192;
+
+function isValidComfyUIDimension(value) {
+  return Number.isInteger(value)
+    && value >= COMFYUI_MIN_IMAGE_DIMENSION
+    && value <= COMFYUI_MAX_IMAGE_DIMENSION
+    && value % 8 === 0;
+}
+
 function resolveComfyUIImageSize(imageConfig, requestSize) {
-  const raw = String(requestSize || imageConfig?.image_size || '1024x1024').trim();
-  const direct = raw.match(/^(\d{3,5})x(\d{3,5})$/i);
+  const fallback = String(imageConfig?.image_size || '').trim() || '1024x1024';
+  const requested = String(requestSize || '').trim();
+  // 归一化常见写法：中文乘号 × / ✕、大写 X、内部空白
+  const raw = (requested || fallback).replace(/[×✕X]/g, 'x').replace(/\s+/g, '');
+  const direct = raw.match(/^(\d{1,5})x(\d{1,5})$/i);
   if (direct) {
-    return { width: Number(direct[1]), height: Number(direct[2]) };
+    const width = Number(direct[1]);
+    const height = Number(direct[2]);
+    if (isValidComfyUIDimension(width) && isValidComfyUIDimension(height)) {
+      return { width, height };
+    }
   }
-  switch (raw) {
+  switch (raw.toLowerCase()) {
     case '512':
       return { width: 512, height: 512 };
-    case '2K':
+    case '2k':
       return { width: 2048, height: 2048 };
-    case '4K':
-      return { width: 3840, height: 2160 };
-    case 'auto':
-    case '1K':
+    case '4k':
+      return { width: 4096, height: 4096 };
     default:
+      // 'auto' / '1K' / 无法识别的写法统一回退默认方图
       return { width: 1024, height: 1024 };
   }
 }
@@ -1814,6 +1831,10 @@ function parseComfyUIWorkflowJson(raw) {
   }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new Error('ComfyUI 工作流格式不正确，请粘贴 API 格式（Save API Format）导出的 JSON');
+  }
+  const hasNode = Object.values(parsed).some((node) => node && typeof node === 'object' && typeof node.class_type === 'string');
+  if (!hasNode) {
+    throw new Error('ComfyUI 工作流内容为空或不包含有效节点，请粘贴 API 格式（Save API Format）导出的 JSON');
   }
   return parsed;
 }
@@ -1846,15 +1867,35 @@ function extractComfyUIHistoryWorkflow(promptTuple) {
   return null;
 }
 
+// 从执行消息中取时间戳（execution_start/execution_success），用于排序
+function getComfyUIHistoryEntryTimestamp(entry) {
+  const messages = Array.isArray(entry?.status?.messages) ? entry.status.messages : [];
+  let timestamp = 0;
+  for (const message of messages) {
+    if (Array.isArray(message) && (message[0] === 'execution_start' || message[0] === 'execution_success')) {
+      const value = Number(message[1]?.timestamp);
+      if (Number.isFinite(value) && value > timestamp) timestamp = value;
+    }
+  }
+  return timestamp;
+}
+
 // 从 /history 中挑出最近一次成功执行的文生图工作流
 function pickComfyUIHistoryWorkflow(historyData) {
   if (!historyData || typeof historyData !== 'object') return null;
   let picked = null;
+  let pickedRank = -1;
+  let index = 0;
   for (const entry of Object.values(historyData)) {
+    index += 1;
     if (entry?.status?.status_str !== 'success') continue;
     const workflow = extractComfyUIHistoryWorkflow(entry?.prompt);
-    if (isComfyUITextToImageWorkflow(workflow)) {
+    if (!isComfyUITextToImageWorkflow(workflow)) continue;
+    // 优先按执行时间戳取最新；时间戳缺失时退化为遍历顺序（>= 保证取到更靠后的条目）
+    const rank = getComfyUIHistoryEntryTimestamp(entry) || index;
+    if (rank >= pickedRank) {
       picked = workflow;
+      pickedRank = rank;
     }
   }
   return picked;
@@ -1878,9 +1919,11 @@ async function fetchComfyUIJson(baseUrl, path, options = {}) {
 // 服务器装有 checkpoint 模型时，按标准结构组装一个最简文生图工作流
 function buildComfyUICheckpointWorkflow(objectInfo) {
   const checkpoints = objectInfo?.CheckpointLoaderSimple?.input?.required?.ckpt_name?.[0];
-  if (!Array.isArray(checkpoints) || checkpoints.length === 0) return null;
+  if (!Array.isArray(checkpoints)) return null;
+  const checkpointName = checkpoints.find((name) => typeof name === 'string' && name.trim());
+  if (!checkpointName) return null;
   return {
-    '1': { class_type: 'CheckpointLoaderSimple', inputs: { ckpt_name: checkpoints[0] } },
+    '1': { class_type: 'CheckpointLoaderSimple', inputs: { ckpt_name: checkpointName } },
     '2': { class_type: 'CLIPTextEncode', inputs: { text: '', clip: ['1', 1] } },
     '3': { class_type: 'CLIPTextEncode', inputs: { text: '', clip: ['1', 1] } },
     '4': { class_type: 'EmptyLatentImage', inputs: { width: 1024, height: 1024, batch_size: 1 } },
@@ -1894,7 +1937,11 @@ function buildComfyUICheckpointWorkflow(objectInfo) {
 async function resolveComfyUIWorkflowTemplate(baseUrl, imageConfig, options = {}) {
   const raw = String(imageConfig?.comfyui_workflow || '').trim();
   if (raw) {
-    return { workflow: parseComfyUIWorkflowJson(raw), source: 'custom' };
+    const customWorkflow = parseComfyUIWorkflowJson(raw);
+    if (!isComfyUITextToImageWorkflow(customWorkflow)) {
+      throw new Error('设置中粘贴的工作流不是完整的文生图工作流：需要包含 KSampler、CLIPTextEncode 与 Empty Latent 节点（当前仅支持文生图，img2img 等工作流暂不支持）');
+    }
+    return { workflow: customWorkflow, source: 'custom' };
   }
   const historyData = await fetchComfyUIJson(baseUrl, '/history?max_items=50', options);
   const historyWorkflow = pickComfyUIHistoryWorkflow(historyData);
@@ -1914,6 +1961,10 @@ function buildComfyUIImageWorkflow(baseWorkflow, prompt, size) {
   if (!workflow || typeof workflow !== 'object' || Array.isArray(workflow)) {
     throw new Error('ComfyUI 工作流格式不正确');
   }
+  const normalizedPrompt = String(prompt || '').trim();
+  if (!normalizedPrompt) {
+    throw new Error('生图提示词为空，请检查输入内容');
+  }
 
   const nodes = Object.entries(workflow);
   let samplerNode = null;
@@ -1926,40 +1977,38 @@ function buildComfyUIImageWorkflow(baseWorkflow, prompt, size) {
     if (node.class_type === 'SaveImage') saveNode = saveNode || node;
   }
 
-  // 正向提示词写入采样器 positive 指向的文本节点；找不到就退而取第一个文本节点
+  // 正向提示词写入采样器 positive 指向的文本节点。
+  // 兜底时必须排除采样器 negative 指向的节点，否则提示词会被写进负向节点（效果完全相反）
   let promptNode = null;
   const positiveRef = samplerNode?.inputs?.positive;
   if (Array.isArray(positiveRef) && workflow[positiveRef[0]]?.class_type === 'CLIPTextEncode') {
     promptNode = workflow[positiveRef[0]];
   }
   if (!promptNode) {
-    for (const [, node] of nodes) {
-      if (node?.class_type === 'CLIPTextEncode' && String(node.inputs?.text || '').trim()) {
-        promptNode = node;
-        break;
+    const negativeRef = samplerNode?.inputs?.negative;
+    const negativeNodeId = Array.isArray(negativeRef) ? String(negativeRef[0]) : null;
+    const candidates = [];
+    for (const [nodeId, node] of nodes) {
+      if (node?.class_type === 'CLIPTextEncode' && nodeId !== negativeNodeId) {
+        candidates.push(node);
       }
     }
+    // 典型工作流里正向节点留空待注入、负向节点预填词，优先选空文本节点
+    promptNode = candidates.find((node) => !String(node.inputs?.text || '').trim()) || candidates[0] || null;
   }
   if (!promptNode) {
-    for (const [, node] of nodes) {
-      if (node?.class_type === 'CLIPTextEncode') {
-        promptNode = node;
-        break;
-      }
-    }
+    throw new Error('ComfyUI 工作流中没有可用的 CLIPTextEncode 正向提示词节点（positive 连接无效，且负向节点之外没有其他文本节点），请检查工作流连接');
   }
-  if (!promptNode) {
-    throw new Error('ComfyUI 工作流中没有 CLIPTextEncode 节点，无法注入提示词');
-  }
-  promptNode.inputs = { ...promptNode.inputs, text: prompt };
+  promptNode.inputs = { ...promptNode.inputs, text: normalizedPrompt };
 
   if (latentNode) {
     latentNode.inputs = { ...latentNode.inputs, width: size.width, height: size.height };
   }
 
-  if (samplerNode?.inputs && Object.prototype.hasOwnProperty.call(samplerNode.inputs, 'seed')) {
+  // seed 为节点链接（数组）时保持原样，不能用随机数覆盖断链
+  if (typeof samplerNode?.inputs?.seed === 'number') {
     samplerNode.inputs = { ...samplerNode.inputs, seed: crypto.randomInt(0, 4294967296) };
-  } else if (samplerNode?.inputs && Object.prototype.hasOwnProperty.call(samplerNode.inputs, 'noise_seed')) {
+  } else if (typeof samplerNode?.inputs?.noise_seed === 'number') {
     samplerNode.inputs = { ...samplerNode.inputs, noise_seed: crypto.randomInt(0, 4294967296) };
   }
 
@@ -1980,13 +2029,14 @@ async function submitComfyUIPrompt(baseUrl, workflow, options = {}) {
       signal: options.signal,
     });
   } catch (error) {
-    throw markAiRequestError(error, { retryable: true });
+    // 提交非幂等：网络错误时任务可能已入队，重试会导致同一提示词重复排队
+    throw markAiRequestError(error, { retryable: false });
   }
   await ensureOk(response, 'ComfyUI 任务提交失败', { source: options.source || 'comfyui-image-model' });
   try {
     return await response.json();
   } catch (error) {
-    throw markAiRequestError(error, { retryable: true });
+    throw markAiRequestError(error, { retryable: false });
   }
 }
 
@@ -2034,12 +2084,14 @@ async function waitComfyUIImageResult(baseUrl, promptId, options = {}) {
             if (images.length > 0) {
               return { entry, images };
             }
+            // 已到终态但没有图片输出（典型原因：工作流缺少 SaveImage 节点），继续轮询不会有变化
+            throw createAiResponseDataError('ComfyUI 任务已完成但没有产出图片，请检查工作流是否包含 SaveImage 等图片输出节点', entry.status);
           }
         }
       }
     } catch (error) {
       if (options.signal?.aborted || error?.name === 'AbortError') throw error;
-      if (error?.response_data) throw error;
+      if (error?.raw_response_data) throw error;
       // 轮询期间的瞬时网络错误不致命，继续等待
     }
     await sleepMs(COMFYUI_POLL_INTERVAL_MS);
@@ -2069,7 +2121,8 @@ async function fetchComfyUIImage(baseUrl, image, options = {}) {
 async function runComfyUIImageGeneration(app, config, request, options = {}) {
   const imageConfig = config.image_model || {};
   const baseUrl = requireBaseUrl(imageConfig.base_url, 'ComfyUI 服务地址缺失，请在设置中填写后保存配置');
-  const prompt = options.promptOverride || normalizeImagePrompt(request);
+  const overridePrompt = String(options.promptOverride || '').trim();
+  const prompt = overridePrompt || normalizeImagePrompt(request);
   const size = options.sizeOverride || resolveComfyUIImageSize(imageConfig, request.size);
   const requestId = createRequestId();
   const logTitle = resolveAiLogTitle(request, request.title ? `AI生图-${request.title}` : 'AI生图');
