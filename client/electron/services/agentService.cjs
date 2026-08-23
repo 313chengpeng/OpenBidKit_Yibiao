@@ -7,11 +7,13 @@ const { buildPiSelfCheckReportMarkdown } = require('./pi/piSelfCheckService.cjs'
 const { createAgentErrorReporter } = require('./agent/agentErrorReporter.cjs');
 const { resolveAgentAbortReason } = require('./agent/agentInterruption.cjs');
 const {
+  createPersistentAgentTask,
   deletePersistentAgentTask,
   getPersistentAgentSessionPath,
   loadPersistentAgentTask,
   updatePersistentAgentTask,
 } = require('./pi/piPersistentTaskStore.cjs');
+const { loadPiModules } = require('./pi/piSessionFactory.cjs');
 const {
   clearPrimaryAgentSession,
   loadPrimaryAgentSession,
@@ -613,6 +615,46 @@ function createAgentService({ app, configStore, aiService, licenseService, autoC
     return updatePersistentAgentTask(app, taskKey, partial);
   }
 
+  // 复制源任务工作区，并通过 Pi SDK 将其 Session 历史分叉到新的持久任务。
+  async function forkPersistentTask(sourceTaskKey, targetTaskKey, state = {}) {
+    const sourceTask = loadPersistentAgentTask(app, sourceTaskKey);
+    if (!sourceTask?.state?.session_file) {
+      throw new Error('源持久 Agent Session 不存在，无法创建分叉任务');
+    }
+    const sourceSessionFile = getPersistentAgentSessionPath(app, sourceTaskKey, sourceTask.state.session_file);
+    if (!fs.existsSync(sourceSessionFile)) {
+      throw new Error('源持久 Agent Session 文件不存在，无法创建分叉任务');
+    }
+
+    const targetTask = createPersistentAgentTask(app, targetTaskKey, {
+      ...state,
+      session_file: '',
+    });
+    try {
+      for (const entry of fs.readdirSync(sourceTask.paths.workspaceDir, { withFileTypes: true })) {
+        fs.cpSync(
+          path.join(sourceTask.paths.workspaceDir, entry.name),
+          path.join(targetTask.paths.workspaceDir, entry.name),
+          { recursive: true, force: true },
+        );
+      }
+      const { codingAgent } = await loadPiModules();
+      const sessionManager = codingAgent.SessionManager.forkFrom(
+        sourceSessionFile,
+        targetTask.paths.workspaceDir,
+        targetTask.paths.sessionsDir,
+      );
+      const sessionFile = sessionManager.getSessionFile();
+      if (!sessionFile) throw new Error('Pi SDK 未生成分叉 Session 文件');
+      return updatePersistentAgentTask(app, targetTaskKey, {
+        session_file: path.basename(sessionFile),
+      });
+    } catch (error) {
+      deletePersistentAgentTask(app, targetTaskKey);
+      throw error;
+    }
+  }
+
   function hasPersistentTaskSession(taskKey) {
     const task = loadPersistentAgentTask(app, taskKey);
     if (!task?.state?.session_file) return false;
@@ -645,6 +687,7 @@ function createAgentService({ app, configStore, aiService, licenseService, autoC
       loadPersistentTask,
       updatePersistentTask,
       deletePersistentTask,
+      forkPersistentTask,
       getPrimarySession,
       isPrimarySession,
     };
@@ -744,6 +787,7 @@ function createAgentService({ app, configStore, aiService, licenseService, autoC
   return {
     bindTaskContext,
     deletePersistentTask,
+    forkPersistentTask,
     loadPersistentTask,
     updatePersistentTask,
     warmup,

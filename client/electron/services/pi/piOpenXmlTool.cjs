@@ -4,8 +4,13 @@ const path = require('node:path');
 const OPENXML_TOOL_NAME = 'openxml';
 const LIST_BLOCKS_ACTION = 'list-blocks';
 const EXTRACT_CHAPTERS_ACTION = 'extract-chapters';
+const SCAN_TEMPLATE_FIELDS_ACTION = 'scan-template-fields';
+const APPLY_TEMPLATE_FIELDS_ACTION = 'apply-template-fields';
 const AGENT_BLOCKS_FILE = '招标原文结构.json';
+const AGENT_TEMPLATE_SOURCE_FILE = '投标模版源文件.docx';
+const AGENT_FIELD_CANDIDATES_FILE = '投标模版字段候选.json';
 const AGENT_TEMPLATE_FILE = 'bid-template.docx';
+const AGENT_TEMPLATE_FIELDS_FILE = 'bid-template-fields.json';
 const DEFAULT_TIMEOUT_MS = 300000;
 
 function createToolResult(payload, isError = false) {
@@ -31,18 +36,22 @@ function createPiOpenXmlTool({
   openXmlHelperService,
   listBusinessSources,
   resolveAgentSources,
+  bidTemplateSourcePath,
+  bidTemplateSourceRelativePath,
   bidTemplatePath,
   bidTemplateRelativePath,
+  bidTemplateFieldsPath,
+  bidTemplateFieldsRelativePath,
 }) {
   return {
     name: OPENXML_TOOL_NAME,
     label: 'Open XML 助手',
-    description: '一次性列出全部招标 Word 原文块，或按原文标题/块区间从全部原件抽出章节生成投标模版。先调用一次 list-blocks 阅读招标原文结构.json，再调用一次 extract-chapters。不要用一级目录的改写标题去碰原文。',
-    promptSnippet: '用 openxml 列出招标 Word 结构并按原文定位抽出投标模版。',
+    description: '列出招标 Word 原文块、抽取投标模版章节、扫描待填候选，并把确认后的候选写成 Word 内容控件。按 list-blocks、extract-chapters、scan-template-fields、apply-template-fields 顺序调用。',
+    promptSnippet: '用 openxml 抽取投标模版、扫描待填候选并写入内容控件。',
     parameters: Type.Object({
       action: Type.String({
-        enum: [LIST_BLOCKS_ACTION, EXTRACT_CHAPTERS_ACTION],
-        description: 'list-blocks 列出原文块；extract-chapters 按原文定位抽章。',
+        enum: [LIST_BLOCKS_ACTION, EXTRACT_CHAPTERS_ACTION, SCAN_TEMPLATE_FIELDS_ACTION, APPLY_TEMPLATE_FIELDS_ACTION],
+        description: '依次列块、抽章、扫描待填候选、应用字段标记。',
       }),
       chapters: Type.Optional(Type.Array(Type.Object({
         id: Type.Optional(Type.String()),
@@ -53,6 +62,17 @@ function createPiOpenXmlTool({
         endBlock: Type.Optional(Type.Number({ minimum: 1, description: '结束块号，不含。' })),
       }, { additionalProperties: false }), {
         description: 'extract-chapters 必填。每章必须提供 sourceTitle 或 startBlock。',
+      })),
+      fields: Type.Optional(Type.Array(Type.Object({
+        candidate_id: Type.String({ minLength: 1, description: '投标模版字段候选.json 中的候选 ID。' }),
+        name: Type.String({ minLength: 1, description: '字段名称；相同内容出现多处时必须使用完全相同的 name。' }),
+        fill_by: Type.String({ enum: ['ai', 'manual'], description: 'ai 表示未来由 AI 填写；manual 表示必须人工处理。' }),
+        instruction: Type.Optional(Type.String({ description: '仅在字段名称不足以说明要求时填写。' })),
+      }, { additionalProperties: false }), {
+        description: 'apply-template-fields 中保留并标记为内容控件的候选。',
+      })),
+      ignored_candidate_ids: Type.Optional(Type.Array(Type.String({ minLength: 1 }), {
+        description: 'apply-template-fields 中确认不是待填字段的全部候选 ID。',
       })),
     }, { additionalProperties: false }),
     execute: async (_toolCallId, params, signal) => {
@@ -109,21 +129,80 @@ function createPiOpenXmlTool({
             request: {
               sources: businessSources,
               chapters,
-              output: bidTemplateRelativePath,
+              output: bidTemplateSourceRelativePath,
             },
             signal,
           });
 
-          if (bidTemplatePath && fs.existsSync(bidTemplatePath)) {
-            fs.copyFileSync(bidTemplatePath, path.join(workspaceDir, AGENT_TEMPLATE_FILE));
+          if (bidTemplateSourcePath && fs.existsSync(bidTemplateSourcePath)) {
+            fs.copyFileSync(bidTemplateSourcePath, path.join(workspaceDir, AGENT_TEMPLATE_SOURCE_FILE));
           }
 
           return createToolResult({
             ok: true,
             action,
-            file_path: AGENT_TEMPLATE_FILE,
+            file_path: AGENT_TEMPLATE_SOURCE_FILE,
+            output: result.output || bidTemplateSourceRelativePath,
+            message: '投标模版章节已抽取，请继续扫描待填字段。',
+          });
+        }
+
+        if (action === SCAN_TEMPLATE_FIELDS_ACTION) {
+          if (!bidTemplateSourcePath || !fs.existsSync(bidTemplateSourcePath)) {
+            throw new Error('请先调用 extract-chapters 抽取投标模版章节');
+          }
+          const result = await openXmlHelperService.runJob({
+            action: SCAN_TEMPLATE_FIELDS_ACTION,
+            timeoutMs: DEFAULT_TIMEOUT_MS,
+            request: { input: bidTemplateSourceRelativePath },
+            signal,
+          });
+          const candidatesPath = path.join(result.jobDir, 'template-field-candidates.json');
+          if (!fs.existsSync(candidatesPath)) {
+            throw new Error('助手没有写出投标模版字段候选');
+          }
+          fs.copyFileSync(candidatesPath, path.join(workspaceDir, AGENT_FIELD_CANDIDATES_FILE));
+          return createToolResult({
+            ok: true,
+            action,
+            file_path: AGENT_FIELD_CANDIDATES_FILE,
+            candidate_count: result.blockCount || result.block_count || 0,
+            message: `已写入 ${AGENT_FIELD_CANDIDATES_FILE}，请逐项分类后调用 apply-template-fields。`,
+          });
+        }
+
+        if (action === APPLY_TEMPLATE_FIELDS_ACTION) {
+          if (!bidTemplateSourcePath || !fs.existsSync(bidTemplateSourcePath)) {
+            throw new Error('请先调用 extract-chapters 抽取投标模版章节');
+          }
+          const fields = normalizeTemplateFields(params.fields);
+          const ignoredCandidateIds = normalizeIgnoredCandidateIds(params.ignored_candidate_ids);
+          const result = await openXmlHelperService.runJob({
+            action: APPLY_TEMPLATE_FIELDS_ACTION,
+            timeoutMs: DEFAULT_TIMEOUT_MS,
+            request: {
+              input: bidTemplateSourceRelativePath,
+              output: bidTemplateRelativePath,
+              fields_output: bidTemplateFieldsRelativePath,
+              fields,
+              ignored_candidate_ids: ignoredCandidateIds,
+            },
+            signal,
+          });
+          if (!bidTemplatePath || !bidTemplateFieldsPath
+            || !fs.existsSync(bidTemplatePath) || !fs.existsSync(bidTemplateFieldsPath)) {
+            throw new Error('助手没有同时写出投标模版和字段清单');
+          }
+          fs.copyFileSync(bidTemplatePath, path.join(workspaceDir, AGENT_TEMPLATE_FILE));
+          fs.copyFileSync(bidTemplateFieldsPath, path.join(workspaceDir, AGENT_TEMPLATE_FIELDS_FILE));
+          return createToolResult({
+            ok: true,
+            action,
+            file_path: AGENT_TEMPLATE_FIELDS_FILE,
+            template_file_path: AGENT_TEMPLATE_FILE,
             output: result.output || bidTemplateRelativePath,
-            message: '投标模版已生成。',
+            field_count: result.blockCount || result.block_count || fields.length,
+            message: '投标模版字段标记和字段清单已生成。',
           });
         }
 
@@ -153,6 +232,21 @@ function normalizeChapters(chapters) {
       endBlock: Number.isFinite(Number(item?.endBlock)) ? Math.floor(Number(item.endBlock)) : undefined,
     }))
     .filter((item) => item.title);
+}
+
+function normalizeTemplateFields(fields) {
+  return (Array.isArray(fields) ? fields : []).map((item) => ({
+    candidate_id: String(item?.candidate_id || '').trim(),
+    name: String(item?.name || '').trim(),
+    fill_by: String(item?.fill_by || '').trim(),
+    ...(String(item?.instruction || '').trim() ? { instruction: String(item.instruction).trim() } : {}),
+  }));
+}
+
+function normalizeIgnoredCandidateIds(candidateIds) {
+  return (Array.isArray(candidateIds) ? candidateIds : [])
+    .map((item) => String(item || '').trim())
+    .filter(Boolean);
 }
 
 /** 由程序绑定章节来源；多份 Word 时禁止省略 source。 */

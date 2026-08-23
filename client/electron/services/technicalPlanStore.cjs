@@ -4,6 +4,8 @@ const path = require('node:path');
 const { getBidAnalysisTasks } = require('./bidAnalysisTask.cjs');
 const {
   getTechnicalPlanBidTemplatePath,
+  getTechnicalPlanBidTemplateSourcePath,
+  getTechnicalPlanBidTemplateFieldsPath,
   getTechnicalPlanGeneratedIllustrationsDir,
   getTechnicalPlanIllustrationsDir,
   getTechnicalPlanOriginalPlanMarkdownPath,
@@ -14,7 +16,10 @@ const {
 const { deleteImportedImageBatches } = require('../utils/importedImages.cjs');
 const { clearMermaidCache } = require('../utils/mermaidCache.cjs');
 const { detectBidSections } = require('../utils/bidSectionDetector.cjs');
-const { OUTLINE_AGENT_TASK_KEY } = require('./outlineGenerationAgentV2Config.cjs');
+const {
+  OUTLINE_AGENT_TASK_KEY,
+  TEMPLATE_EXTRACTION_AGENT_TASK_KEY,
+} = require('./outlineGenerationAgentV2Config.cjs');
 const { GLOBAL_FACTS_AGENT_TASK_KEY } = require('./globalFactsAgentV2Config.cjs');
 
 const tenderMarkdownRelativePath = path.join('technical-plan', 'tender.md').replace(/\\/g, '/');
@@ -22,6 +27,8 @@ const tenderOriginalMarkdownRelativePath = path.join('technical-plan', 'tender-o
 const tenderSourceFilesDirRelativePath = path.join('technical-plan', 'tender-files').replace(/\\/g, '/');
 const tenderOriginalsDirRelativePath = path.join('technical-plan', 'tender-originals').replace(/\\/g, '/');
 const bidTemplateRelativePath = path.join('technical-plan', 'bid-template.docx').replace(/\\/g, '/');
+const bidTemplateSourceRelativePath = path.join('technical-plan', 'bid-template-source.docx').replace(/\\/g, '/');
+const bidTemplateFieldsRelativePath = path.join('technical-plan', 'bid-template-fields.json').replace(/\\/g, '/');
 const originalPlanMarkdownRelativePath = path.join('technical-plan', 'original-plan.md').replace(/\\/g, '/');
 const originalOutlineRuntimeFileName = 'original-outline-runtime.json';
 const defaultOutlineWordControlOptions = Object.freeze({
@@ -447,6 +454,7 @@ function remapContentTaskStats(stats, idMap) {
 function createTechnicalPlanStore({ app, db, fileService, agentService, taskLogStore }) {
   function deleteOutlineAgentTask() {
     agentService.deletePersistentTask(OUTLINE_AGENT_TASK_KEY);
+    agentService.deletePersistentTask(TEMPLATE_EXTRACTION_AGENT_TASK_KEY);
   }
   function deleteGlobalFactsAgentTask() {
     agentService.deletePersistentTask(GLOBAL_FACTS_AGENT_TASK_KEY);
@@ -478,6 +486,8 @@ function createTechnicalPlanStore({ app, db, fileService, agentService, taskLogS
   const tenderSourceFilesDir = path.join(path.dirname(tenderMarkdownPath), 'tender-files');
   const tenderOriginalsDir = getTechnicalPlanTenderOriginalsDir(app);
   const bidTemplatePath = getTechnicalPlanBidTemplatePath(app);
+  const bidTemplateSourcePath = getTechnicalPlanBidTemplateSourcePath(app);
+  const bidTemplateFieldsPath = getTechnicalPlanBidTemplateFieldsPath(app);
   const originalPlanMarkdownPath = getTechnicalPlanOriginalPlanMarkdownPath(app);
   const originalOutlineRuntimePath = path.join(path.dirname(originalPlanMarkdownPath), originalOutlineRuntimeFileName);
   const illustrationsDir = getTechnicalPlanIllustrationsDir(app);
@@ -823,16 +833,31 @@ function createTechnicalPlanStore({ app, db, fileService, agentService, taskLogS
   }
 
   function clearBidTemplate() {
-    if (!fs.existsSync(bidTemplatePath)) return;
-    try {
-      fs.rmSync(bidTemplatePath, { force: true });
-    } catch (error) {
-      if (['EPERM', 'EBUSY', 'EACCES'].includes(error?.code)) {
-        const lockError = new Error('投标模版正在被 Word 使用，请关闭后重试');
-        lockError.code = 'BID_TEMPLATE_IN_USE';
-        throw lockError;
+    const templateFiles = [bidTemplatePath, bidTemplateSourcePath, bidTemplateFieldsPath];
+    const templateDir = path.dirname(bidTemplatePath);
+    if (fs.existsSync(templateDir)) {
+      const tempPrefixes = [
+        `${path.basename(bidTemplatePath)}.`,
+        `${path.basename(bidTemplateFieldsPath)}.`,
+      ];
+      for (const name of fs.readdirSync(templateDir)) {
+        if (tempPrefixes.some((prefix) => name.startsWith(prefix) && name.includes('.tmp'))) {
+          templateFiles.push(path.join(templateDir, name));
+        }
       }
-      throw error;
+    }
+    for (const filePath of templateFiles) {
+      if (!fs.existsSync(filePath)) continue;
+      try {
+        fs.rmSync(filePath, { force: true });
+      } catch (error) {
+        if (['EPERM', 'EBUSY', 'EACCES'].includes(error?.code)) {
+          const lockError = new Error('投标模版正在被 Word 使用，请关闭后重试');
+          lockError.code = 'BID_TEMPLATE_IN_USE';
+          throw lockError;
+        }
+        throw error;
+      }
     }
   }
 
@@ -1971,7 +1996,7 @@ function createTechnicalPlanStore({ app, db, fileService, agentService, taskLogS
       contentGenerationOptions: safeJsonParse(meta.content_generation_options_json, undefined),
       contentGenerationRuntime: safeJsonParse(meta.content_generation_runtime_json, undefined),
       contentIllustrationPlan: loadContentIllustrationPlan(),
-      bidTemplateExists: fs.existsSync(bidTemplatePath),
+      bidTemplateExists: fs.existsSync(bidTemplatePath) && fs.existsSync(bidTemplateFieldsPath),
       contentGenerationSections: loadContentSections(outlineData),
       contentGenerationPlans: loadContentPlans(),
       outlineData,
@@ -2606,11 +2631,23 @@ function createTechnicalPlanStore({ app, db, fileService, agentService, taskLogS
     getBidTemplateRelativePath() {
       return bidTemplateRelativePath;
     },
+    getBidTemplateSourceRelativePath() {
+      return bidTemplateSourceRelativePath;
+    },
+    getBidTemplateFieldsRelativePath() {
+      return bidTemplateFieldsRelativePath;
+    },
     hasBidTemplate() {
-      return fs.existsSync(bidTemplatePath);
+      return fs.existsSync(bidTemplatePath) && fs.existsSync(bidTemplateFieldsPath);
     },
     getBidTemplatePath() {
       return bidTemplatePath;
+    },
+    getBidTemplateSourcePath() {
+      return bidTemplateSourcePath;
+    },
+    getBidTemplateFieldsPath() {
+      return bidTemplateFieldsPath;
     },
     copyTenderOriginalsToDirectory(destDir) {
       const targetDir = String(destDir || '').trim();

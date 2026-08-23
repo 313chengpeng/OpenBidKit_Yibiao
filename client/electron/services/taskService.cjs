@@ -6,7 +6,10 @@ const { runGlobalFactsTaskV2 } = require('./globalFactsTaskV2.cjs');
 const { runOutlineGenerationTaskV2 } = require('./outlineGenerationTaskV2.cjs');
 const { runOutlineAdjustmentTask } = require('./outlineAdjustmentTask.cjs');
 const { runGlobalFactsAdjustmentTask } = require('./globalFactsAdjustmentTask.cjs');
-const { OUTLINE_AGENT_TASK_KEY } = require('./outlineGenerationAgentV2Config.cjs');
+const {
+  OUTLINE_AGENT_TASK_KEY,
+  TEMPLATE_EXTRACTION_AGENT_TASK_KEY,
+} = require('./outlineGenerationAgentV2Config.cjs');
 const { GLOBAL_FACTS_AGENT_TASK_KEY } = require('./globalFactsAgentV2Config.cjs');
 const { FEASIBILITY_OUTLINE_AGENT_TASK_KEY } = require('./feasibilityOutlineAgentConfig.cjs');
 const { runRejectionCheckTask, runRejectionItemsExtractionTask } = require('./rejectionCheckTask.cjs');
@@ -871,15 +874,23 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
           ? feasibilityReportStore
           : duplicateCheckStore;
     const runnerAiService = aiService?.withQueueScope ? aiService.withQueueScope(queueScopeId, taskControl.signal) : aiService;
+    const agentTaskContextProvider = () => createAgentUserTaskContext(type, definition, payload, currentTask);
     const runnerAgentService = agentService.bindTaskContext(
-      () => createAgentUserTaskContext(type, definition, payload, currentTask),
+      agentTaskContextProvider,
       {
         queueScopeId,
         signal: taskControl.signal,
         primary_session: startOptions.primarySession === true,
       },
     );
-    runner({ aiService: runnerAiService, agentService: runnerAgentService, workspaceStore: runnerWorkspaceStore, knowledgeBaseService, openXmlHelperService, updateTask, checkpointTask, payload, taskControl, previousState }).catch((error) => {
+    const runnerOrdinaryAgentService = agentService.bindTaskContext(
+      agentTaskContextProvider,
+      {
+        queueScopeId,
+        signal: taskControl.signal,
+      },
+    );
+    runner({ aiService: runnerAiService, agentService: runnerAgentService, ordinaryAgentService: runnerOrdinaryAgentService, workspaceStore: runnerWorkspaceStore, knowledgeBaseService, openXmlHelperService, updateTask, checkpointTask, payload, taskControl, previousState }).catch((error) => {
       if (!taskControl.signal.aborted) {
         checkpointTask({ status: 'error', error: error.message || '任务执行失败' });
       }
@@ -1000,8 +1011,12 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
 
     const agentState = outlineTask.stats?.agent || {};
     let persistentTask = null;
+    let templatePersistentTask = null;
     try {
       persistentTask = agentService.loadPersistentTask(OUTLINE_AGENT_TASK_KEY);
+    } catch {}
+    try {
+      templatePersistentTask = agentService.loadPersistentTask(TEMPLATE_EXTRACTION_AGENT_TASK_KEY);
     } catch {}
     const recoverableWaiting = persistentTask?.state?.run_id === outlineTask.task_id
       && persistentTask.state.status === 'waiting-outline-selection'
@@ -1036,11 +1051,28 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
         });
       } catch {}
     }
+    if (templatePersistentTask) {
+      try {
+        agentService.updatePersistentTask(TEMPLATE_EXTRACTION_AGENT_TASK_KEY, {
+          status: 'interrupted',
+          agent_connection: 'idle',
+          error: message,
+        });
+      } catch {}
+    }
+    try { technicalPlanStore.clearBidTemplate(); } catch {}
     const recoveredStats = { ...(outlineTask.stats || {}) };
     delete recoveredStats.outline_selection;
     if (recoveredStats.agent) {
       recoveredStats.agent = {
         ...recoveredStats.agent,
+        status: 'interrupted',
+        agent_connection: 'idle',
+      };
+    }
+    if (recoveredStats.template_agent) {
+      recoveredStats.template_agent = {
+        ...recoveredStats.template_agent,
         status: 'interrupted',
         agent_connection: 'idle',
       };
@@ -1396,6 +1428,7 @@ function createTaskService({ aiService, agentService, autoConfirmationService, t
         primarySession: true,
         beforeStart: () => {
           agentService.deletePersistentTask(OUTLINE_AGENT_TASK_KEY);
+          agentService.deletePersistentTask(TEMPLATE_EXTRACTION_AGENT_TASK_KEY);
           technicalPlanStore.clearBidTemplate();
         },
       });
