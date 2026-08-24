@@ -45,9 +45,19 @@ function getTechnicalPlanTenderOriginalsDir(app) {
   return path.join(getTechnicalPlanDir(app), 'tender-originals');
 }
 
-/** 一级目录确认后生成的投标模版。 */
+/** 一级目录确认后生成的最终投标模版。 */
 function getTechnicalPlanBidTemplatePath(app) {
   return path.join(getTechnicalPlanDir(app), 'bid-template.docx');
+}
+
+/** 模版抽章后的内部源文件，供字段扫描和标记使用。 */
+function getTechnicalPlanBidTemplateSourcePath(app) {
+  return path.join(getTechnicalPlanDir(app), 'bid-template-source.docx');
+}
+
+/** 与最终投标模版成对保存的待填字段清单。 */
+function getTechnicalPlanBidTemplateFieldsPath(app) {
+  return path.join(getTechnicalPlanDir(app), 'bid-template-fields.json');
 }
 
 function getTechnicalPlanOriginalPlanMarkdownPath(app) {
@@ -202,6 +212,8 @@ module.exports = {
   getTechnicalPlanLogsDir,
   getTechnicalPlanOriginalPlanMarkdownPath,
   getTechnicalPlanBidTemplatePath,
+  getTechnicalPlanBidTemplateSourcePath,
+  getTechnicalPlanBidTemplateFieldsPath,
   getTechnicalPlanTenderMarkdownPath,
   getTechnicalPlanTenderOriginalsDir,
   getWorkspaceDir,

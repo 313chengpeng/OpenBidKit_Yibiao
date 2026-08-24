@@ -1,5 +1,8 @@
-const path = require('node:path');
-const { OUTLINE_AGENT_TASK_KEY } = require('./outlineGenerationAgentV2Config.cjs');
+const {
+  OUTLINE_AGENT_TASK_KEY,
+  TEMPLATE_EXTRACTION_AGENT_TASK_KEY,
+} = require('./outlineGenerationAgentV2Config.cjs');
+const { runTemplateExtractionTask } = require('./templateExtractionTask.cjs');
 
 const DEFAULT_ESTIMATED_SECTION_WORDS = 3000;
 const OUTLINE_OUTPUT_FILE = 'outline.json';
@@ -11,7 +14,6 @@ const OUTLINE_REVIEW_FILE = 'outline-review.json';
 const OUTLINE_REVIEW_CONTEXT_FILE = 'outline-review-context.json';
 const AI_CONTENT_MODE = 'ai-generate';
 const CONTENT_MODES = ['ai-generate', 'template-fill', 'point-to-point', 'other'];
-const AGENT_TENDER_ORIGINALS_DIR = '招标原件';
 
 function createDirectoryNodeSchema(level, root = false) {
   const baseProperties = {
@@ -536,41 +538,9 @@ function createLeafAllocationPrompt() {
 8. 程序已为 ${LEAF_ALLOCATION_FILE} 预置 Schema。完成后调用 json-validation 校验，只传 file_path；校验失败后必须先修改文件，再重新校验。`;
 }
 
-function formatTenderOriginalPaths(fileNames) {
-  return (Array.isArray(fileNames) ? fileNames : [])
-    .map((name) => String(name || '').trim())
-    .filter(Boolean)
-    .map((name) => `${AGENT_TENDER_ORIGINALS_DIR}/${name}`);
-}
 
-function createTemplateExtractPrompt(tenderOriginalNames = []) {
-  const originalPaths = formatTenderOriginalPaths(tenderOriginalNames);
-  const hasMultipleOriginals = originalPaths.length > 1;
-  const originalList = originalPaths.length
-    ? originalPaths.map((item) => `- ${item}`).join('\n')
-    : `- ${AGENT_TENDER_ORIGINALS_DIR}/`;
-  return `用户已经确认最终保留的一级目录。程序已把确认后的目录写入 ${OUTLINE_OUTPUT_FILE}，并把招标 Word 原件放到 ${AGENT_TENDER_ORIGINALS_DIR}/。
 
-招标原件只有这些文件：
-${originalList}
-
-程序会固定使用清单中的第一份 Word 作为投标模版的全局样式基准。
-
-请根据选中的一级目录，调用 openxml 生成投标文件模版。
-
-要求：
-1. 先只调用一次 openxml，action=list-blocks。不要传 sources，程序会固定读取上面列出的全部 Word 原件。
-2. 用 read 阅读工作区中的 招标原文结构.json；多份原件的块会按 source.path 分组，块号只在各自原件内有效。
-3. 针对 ${OUTLINE_OUTPUT_FILE} 里每一个一级目录，在原文结构中找到对应章节。必须使用招标 Word 里的真实标题或块号，不要用一级目录的改写标题去硬碰原文。
-4. 再只调用一次 openxml，action=extract-chapters，不要传 sources。chapters 每一项必须包含 title（一级目录标题），以及 sourceTitle（原文真实标题）或 startBlock/endBlock（块区间，endBlock 不含）。${hasMultipleOriginals ? '当前有多份 Word 原件，每一项都必须填写 source，并使用 招标原文结构.json 中对应来源的完整 path。' : '程序会固定使用唯一的 Word 原件，source 可以省略。'}
-5. 所有一级目录都必须抽到。对不上就换原文标题或块号重试，不要为此询问用户。
-6. 不要修改 ${OUTLINE_OUTPUT_FILE}。`;
-}
-
-function createScorePlanningPrompt({ templateExtractionSkipped = false, standaloneTechnical = false } = {}) {
-  const templateInstruction = templateExtractionSkipped
-    ? '程序已跳过投标模版提取，不要判断或补做该步骤，直接执行当前目录规划。'
-    : '';
+function createScorePlanningPrompt({ standaloneTechnical = false } = {}) {
   const placementInstruction = standaloneTechnical
     ? `4. 当前采用“技术文件独立成册”：${OUTLINE_OUTPUT_FILE} 中每个一级根节点本身就应对应一个技术评分大项。每个根节点建立一个 branch，score_item_level 固定为 1，mappings 只填写与该根标题对应的评分大项，target_title 必须与 root_title 完全一致；不得再创建“技术方案”“项目管理方案”“监理大纲”“监理大纲（暗标）”“施工组织设计”“技术标”等外层分支。
 5. 一级根节点与评分大项默认严格一一对应；发现缺失、重复、合并或顺序不一致时，必须作为一级目录调整向用户说明并取得批准。detail_points 只用于后续生成根节点以下的目录。`
@@ -579,7 +549,7 @@ function createScorePlanningPrompt({ templateExtractionSkipped = false, standalo
   const planExample = standaloneTechnical
     ? `{"branches":[{"branch_id":"B1","root_id":"1","root_title":"评分大项一","score_item_level":1,"mappings":[{"requirement_id":"R1","target_title":"评分大项一"}]}],"extra_titles":[],"allow_root_changes":false}`
     : `{"branches":[{"branch_id":"B1","root_id":"2","root_title":"技术方案","score_item_level":2,"mappings":[{"requirement_id":"R1","target_title":"评分大项目录标题","additional_titles":["经批准拆分出的同级标题"],"adjustment_note":"用户批准的调整说明"}]}],"extra_titles":[{"branch_id":"B1","title":"经批准增加的同层级标题","reason":"增加原因"}],"allow_root_changes":false}`;
-  return `用户已经确认最终保留的一级目录，${OUTLINE_OUTPUT_FILE} 已由程序重新整理并编号。工作区也已加入技术评分信息和用户选择的参考资料。${templateInstruction ? `\n${templateInstruction}` : ''}
+  return `用户已经确认最终保留的一级目录，${OUTLINE_OUTPUT_FILE} 已由程序重新整理并编号。工作区也已加入技术评分信息和用户选择的参考资料。
 
 请完成技术评分项结构化和目录规划：
 1. 阅读 ${OUTLINE_OUTPUT_FILE}、技术评分信息.md，以及存在的原方案.md 和参考知识库目录。
@@ -680,32 +650,8 @@ function createOutlineReviewPrompt({ targetLeafCount, actualLeafCount, allowRoot
 12. 程序已为 ${OUTLINE_OUTPUT_FILE} 和 ${OUTLINE_REVIEW_FILE} 预置 Schema。分别调用 json-validation 校验，只传 file_path；校验失败后必须先修改对应文件，再重新校验。`;
 }
 
-/** 把招标 Word 原件拷进目录生成 Agent 工作区。 */
-function stageTenderOriginalsForAgent(agentService, workspaceStore) {
-  const persistent = agentService.loadPersistentTask(OUTLINE_AGENT_TASK_KEY);
-  const agentWorkspace = persistent?.paths?.workspaceDir;
-  if (!agentWorkspace) {
-    throw new Error('目录生成工作区不存在，请重新生成目录');
-  }
-  const copied = workspaceStore.copyTenderOriginalsToDirectory(path.join(agentWorkspace, AGENT_TENDER_ORIGINALS_DIR));
-  if (!copied.length) {
-    throw new Error('请重新导入招标文件');
-  }
-  return copied;
-}
-
-function buildOpenXmlToolOptions(workspaceStore, openXmlHelperService) {
-  return {
-    openXmlHelperService,
-    listBusinessSources: () => workspaceStore.listTenderSourceDocxRelativePaths(),
-    resolveAgentSources: (hint) => workspaceStore.resolveTenderSourceDocxPath(hint),
-    bidTemplatePath: workspaceStore.getBidTemplatePath(),
-    bidTemplateRelativePath: workspaceStore.getBidTemplateRelativePath(),
-  };
-}
-
-// 运行 V2 目录业务任务；完整 Agent 执行之间通过程序确认衔接并复用同一持久 Session。
-async function runOutlineGenerationTaskV2({ agentService, workspaceStore, knowledgeBaseService, openXmlHelperService, updateTask, checkpointTask, taskControl, payload }) {
+// 运行 V2 目录业务任务；开发者模式下一级目录确认后并行调度目录任务和独立模版提取任务。
+async function runOutlineGenerationTaskV2({ aiService, agentService, ordinaryAgentService, workspaceStore, knowledgeBaseService, openXmlHelperService, updateTask, checkpointTask, taskControl, payload }) {
   const storedPlan = workspaceStore.loadTechnicalPlan() || {};
   const restoringOutlineSelection = payload?.agent_resume?.phase === 'outline-selection';
   const standaloneTechnical = storedPlan.outlineMode === 'standalone-technical';
@@ -750,6 +696,7 @@ async function runOutlineGenerationTaskV2({ agentService, workspaceStore, knowle
   let currentProgress = restoringOutlineSelection ? Number(storedPlan.outlineGenerationTask?.progress || 30) : 10;
   const initialCheckpoint = checkpointTask({ status: 'running', progress: currentProgress, logs });
   let task = initialCheckpoint.task;
+  const templateTaskId = `${task.task_id}-template`;
   let lockedRoots = [];
   let technicalBranches = [];
   let scoreDirectoryPlan = null;
@@ -808,6 +755,30 @@ async function runOutlineGenerationTaskV2({ agentService, workspaceStore, knowle
       agent_connection: checkpoint.agent_connection,
       session_file: checkpoint.session_file,
     });
+  }
+
+  function publishTemplateAgentActivity(event = {}) {
+    const title = formatProgressTitle(event.message);
+    if (!title || event.visible === false) return;
+    publish(`投标模版：${title}`, Math.max(currentProgress, 35));
+  }
+
+  function syncTemplateAgentCheckpoint(checkpoint) {
+    const next = checkpointTask({
+      stats: {
+        ...(task.stats || {}),
+        template_agent: {
+          ...(task.stats?.template_agent || {}),
+          task_key: TEMPLATE_EXTRACTION_AGENT_TASK_KEY,
+          run_id: templateTaskId,
+          status: checkpoint.status,
+          phase: checkpoint.phase,
+          agent_connection: checkpoint.agent_connection,
+          session_file: checkpoint.session_file,
+        },
+      },
+    });
+    task = next.task;
   }
 
   function applyConfirmedSelection(confirmed) {
@@ -917,81 +888,88 @@ async function runOutlineGenerationTaskV2({ agentService, workspaceStore, knowle
 
   const confirmed = await taskControl.waitForOutlineSelection();
   applyConfirmedSelection(confirmed);
-  const hasTenderWordOriginals = !standaloneTechnical && workspaceStore.listTenderSourceDocxRelativePaths().length > 0;
-  let initialStage;
-  let initialStageIndex;
-  let agentPrompt;
-  let agentFiles;
-  let openXmlTool;
+  const extractTemplate =
+    !standaloneTechnical && Boolean(aiService?.isDeveloperMode?.());
 
-  if (hasTenderWordOriginals) {
-    const tenderOriginalNames = stageTenderOriginalsForAgent(agentService, workspaceStore);
-    initialStage = 'template-extract';
-    initialStageIndex = 1;
-    agentPrompt = createTemplateExtractPrompt(tenderOriginalNames);
-    agentFiles = [
-      { path: OUTLINE_OUTPUT_FILE, content: JSON.stringify({ outline: lockedRoots }, null, 2) },
-    ];
-    openXmlTool = buildOpenXmlToolOptions(workspaceStore, openXmlHelperService);
-    publish('一级目录已确认，正在提取投标模版', 35);
-  } else {
-    initialStage = 'score-planning';
-    initialStageIndex = 2;
-    agentPrompt = createScorePlanningPrompt({ templateExtractionSkipped: true, standaloneTechnical });
-    agentFiles = [
-      { path: OUTLINE_OUTPUT_FILE, content: JSON.stringify({ outline: lockedRoots }, null, 2) },
-      { path: '技术评分信息.md', content: storedPlan.techRequirements || '' },
-      ...knowledgeFiles,
-    ];
-    checkpointTask({}, { bidTemplateExists: false });
-    publish('一级目录已确认，已跳过投标模版提取，正在识别技术方案目录', 40);
-  }
+  publish(
+    extractTemplate
+      ? '一级目录已确认，目录生成与投标模版提取并行开始'
+      : standaloneTechnical
+        ? '一级目录已确认，已跳过投标模版提取，开始生成技术文件目录'
+        : '一级目录已确认，开始生成完整目录',
+    35,
+  );
 
-  updateAgentState({ status: 'running', phase: initialStage, agent_connection: 'idle' });
+  try {
+  updateAgentState({ status: 'running', phase: 'score-planning', agent_connection: 'idle' });
   agentService.updatePersistentTask(OUTLINE_AGENT_TASK_KEY, {
     status: 'running',
-    phase: initialStage,
+    phase: 'score-planning',
     agent_connection: 'idle',
   });
 
-  const agentResult = await agentService.runTask({
+  if (extractTemplate && workspaceStore.listTenderSourceDocxRelativePaths().length) {
+    await ordinaryAgentService.forkPersistentTask(
+      OUTLINE_AGENT_TASK_KEY,
+      TEMPLATE_EXTRACTION_AGENT_TASK_KEY,
+      {
+        run_id: templateTaskId,
+        title: '投标模版提取',
+        status: 'created',
+        phase: 'template-extraction',
+        agent_connection: 'idle',
+      },
+    );
+  }
+
+  const parallelController = new AbortController();
+  const parallelSignal = AbortSignal.any([taskControl.signal, parallelController.signal]);
+  let firstParallelFailure = null;
+  const observeParallelBranch = (label, promise) => promise.catch((error) => {
+    if (!firstParallelFailure && !taskControl.signal.aborted) {
+      firstParallelFailure = { label, error };
+      const reason = new Error(`${label}失败，已取消同级任务`);
+      reason.code = 'TASK_CANCELLED';
+      parallelController.abort(reason);
+    }
+    throw error;
+  });
+
+  const templatePromise = extractTemplate
+    ? runTemplateExtractionTask({
+        agentService: ordinaryAgentService,
+        workspaceStore,
+        openXmlHelperService,
+        taskId: templateTaskId,
+        outline: lockedRoots,
+        signal: parallelSignal,
+        onActivity: publishTemplateAgentActivity,
+        onCheckpoint: syncTemplateAgentCheckpoint,
+      })
+    : null;
+
+  const directoryPromise = agentService.runTask({
     task_id: task.task_id,
     title: '技术方案目录生成 V2',
-    prompt: agentPrompt,
+    prompt: createScorePlanningPrompt({ standaloneTechnical }),
     output_file: OUTLINE_OUTPUT_FILE,
-    files: agentFiles,
-    signal: taskControl.signal,
+    files: [
+      { path: OUTLINE_OUTPUT_FILE, content: JSON.stringify({ outline: lockedRoots }, null, 2) },
+      { path: '技术评分信息.md', content: storedPlan.techRequirements || '' },
+      ...knowledgeFiles,
+    ],
+    signal: parallelSignal,
     persistent_task: {
       task_key: OUTLINE_AGENT_TASK_KEY,
       mode: 'resume',
     },
-    initial_stage: initialStage,
-    initial_stage_index: initialStageIndex,
+    initial_stage: 'score-planning',
+    initial_stage_index: 2,
     json_validation_schemas: jsonValidationSchemas,
-    open_xml_tool: openXmlTool,
     max_retries: 0,
     onActivity: publishAgentActivity,
     onCheckpoint: syncAgentCheckpoint,
     continueTask: async (candidate, meta) => {
-      if (meta.workflow_stage === 'template-extract') {
-        if (!workspaceStore.hasBidTemplate()) {
-          throw new Error('尚未生成投标模版，请先调用 openxml 提取并生成模版');
-        }
-        checkpointTask({}, { bidTemplateExists: true });
-        publish('投标模版已生成，正在识别技术方案目录', 40);
-        return {
-          stage: 'score-planning',
-          stage_index: 2,
-          message: 'Agent 正在识别技术方案目录',
-          prompt: createScorePlanningPrompt({ standaloneTechnical }),
-          files: [
-            { path: OUTLINE_OUTPUT_FILE, content: JSON.stringify({ outline: lockedRoots }, null, 2) },
-            { path: '技术评分信息.md', content: storedPlan.techRequirements || '' },
-            ...knowledgeFiles,
-          ],
-        };
-      }
-
       if (meta.workflow_stage === 'outline_review') {
         const reviewedOutline = readJson(candidate.output_content, OUTLINE_OUTPUT_FILE);
         const normalizedReviewedOutline = buildFinalOutline(reviewedOutline);
@@ -1117,6 +1095,57 @@ async function runOutlineGenerationTaskV2({ agentService, workspaceStore, knowle
     },
   });
 
+  let directoryReturned = false;
+  let templateReturned = !extractTemplate;
+  const observedDirectoryPromise = observeParallelBranch('目录生成', directoryPromise).finally(() => {
+    directoryReturned = true;
+    if (extractTemplate && !templateReturned) publish('目录生成任务已返回，正在等待投标模版提取任务', 95);
+  });
+
+  let agentResult;
+  let templateResult = null;
+  if (extractTemplate) {
+    const observedTemplatePromise = observeParallelBranch('投标模版提取', templatePromise).finally(() => {
+      templateReturned = true;
+      if (!directoryReturned) publish('投标模版提取任务已返回，正在等待目录生成任务', Math.max(currentProgress, 60));
+    });
+    const [directorySettled, templateSettled] = await Promise.allSettled([
+      observedDirectoryPromise,
+      observedTemplatePromise,
+    ]);
+    if (directorySettled.status === 'rejected' || templateSettled.status === 'rejected') {
+      try { workspaceStore.clearBidTemplate(); } catch {}
+      if (firstParallelFailure) {
+        const failure = new Error(`${firstParallelFailure.label}失败：${firstParallelFailure.error?.message || String(firstParallelFailure.error)}`);
+        if (firstParallelFailure.error?.code) failure.code = firstParallelFailure.error.code;
+        throw failure;
+      }
+      const directoryError = directorySettled.status === 'rejected' ? directorySettled.reason : null;
+      const templateError = templateSettled.status === 'rejected' ? templateSettled.reason : null;
+      const messages = [
+        directoryError ? `目录生成失败：${directoryError?.message || String(directoryError)}` : '',
+        templateError ? `投标模版提取失败：${templateError?.message || String(templateError)}` : '',
+      ].filter(Boolean);
+      throw new Error(messages.join('；') || '目录生成未完成');
+    }
+
+    agentResult = directorySettled.value;
+    templateResult = templateSettled.value;
+    if (templateResult.status !== 'skipped' && !workspaceStore.hasBidTemplate()) {
+      try { workspaceStore.clearBidTemplate(); } catch {}
+      throw new Error('投标模版提取任务已返回，但模版和字段清单不完整');
+    }
+    publish(
+      templateResult.status === 'skipped'
+        ? '目录生成完成，当前无招标 Word 原件，已跳过投标模版提取'
+        : `目录生成与投标模版提取均已完成，共标记 ${templateResult.field_count || 0} 个字段`,
+      98,
+    );
+  } else {
+    agentResult = await observedDirectoryPromise;
+    publish('目录生成完成', 98);
+  }
+
   if (!finalOutline) {
     const candidateOutline = readJson(agentResult.output_content, OUTLINE_OUTPUT_FILE);
     finalOutline = buildFinalOutline(candidateOutline);
@@ -1124,7 +1153,16 @@ async function runOutlineGenerationTaskV2({ agentService, workspaceStore, knowle
     actualLeafCount = countAiLeaves(finalOutline.outline);
   }
   const persistedFinalOutline = stripOutlineInternalFields(finalOutline);
-  const finalLogs = [...logs, '目录生成与审核完成', ...(leafWarning ? [leafWarning] : [])];
+  const completionLog = !extractTemplate
+    ? '目录生成与审核完成'
+    : templateResult.status === 'skipped'
+      ? '目录生成与审核完成，当前无招标 Word 原件'
+      : `目录生成、审核与投标模版提取完成，共标记 ${templateResult.field_count || 0} 个字段`;
+  const finalLogs = [
+    ...logs,
+    completionLog,
+    ...(leafWarning ? [leafWarning] : []),
+  ];
   const finalTaskPatch = {
     status: 'success',
     progress: 100,
@@ -1140,9 +1178,22 @@ async function runOutlineGenerationTaskV2({ agentService, workspaceStore, knowle
         word_adjustment_attempts: wordAdjustmentAttempts,
         ...(leafWarning ? { word_adjustment_warning: leafWarning, word_adjustment_warning_kind: 'leaf-count' } : {}),
       },
+      ...(extractTemplate ? {
+        template_agent: {
+          ...(task.stats?.template_agent || {}),
+          task_key: TEMPLATE_EXTRACTION_AGENT_TASK_KEY,
+          run_id: templateTaskId,
+          status: templateResult.status,
+          phase: templateResult.status === 'skipped' ? 'skipped' : 'completed',
+          agent_connection: 'idle',
+          field_count: templateResult.field_count || 0,
+          ...(templateResult.session_id ? { session_id: templateResult.session_id } : {}),
+        },
+      } : { template_agent: undefined }),
     },
   };
   const finalCheckpoint = checkpointTask(finalTaskPatch, {
+    bidTemplateExists: !standaloneTechnical && workspaceStore.hasBidTemplate(),
     outlineData: { ...persistedFinalOutline, project_overview: storedPlan.projectOverview || '' },
     outlineWordControlSnapshot: wordControlOptions,
     contentGenerationTask: undefined,
@@ -1159,6 +1210,28 @@ async function runOutlineGenerationTaskV2({ agentService, workspaceStore, knowle
     error: null,
     completed_at: new Date().toISOString(),
   });
+  } catch (error) {
+    const message = error?.message || String(error);
+    const status = taskControl.signal.aborted || error?.code === 'AGENT_DISCONNECTED'
+      ? 'interrupted'
+      : 'error';
+    try {
+      updateAgentState({
+        status,
+        agent_connection: 'idle',
+        error: message,
+      });
+    } catch {}
+    try {
+      agentService.updatePersistentTask(OUTLINE_AGENT_TASK_KEY, {
+        status,
+        agent_connection: 'idle',
+        error: message,
+      });
+    } catch {}
+    try { workspaceStore.clearBidTemplate(); } catch {}
+    throw error;
+  }
 }
 
 module.exports = {
