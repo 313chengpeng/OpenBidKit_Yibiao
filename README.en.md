@@ -48,7 +48,6 @@
 
 ## 💌 Friendly Links
 
-[Jiatu Document Assistant](https://github.com/migrant1124/WPSTD)
 [Yibiao Web Version (provided by a third party)](https://github.com/jdcome/OpenBidKit-Yibiao-Web)
 
 <h2 align="center">✨ Features & Advantages</h2>
