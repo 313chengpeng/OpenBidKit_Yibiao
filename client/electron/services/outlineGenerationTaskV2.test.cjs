@@ -38,9 +38,23 @@ test('独立成册生成子目录时不重复评分项根标题', () => {
   assert.doesNotMatch(prompt, /"title":"技术方案"/);
 });
 
-test('独立成册末级小节目标满足每个技术分支至少两个', () => {
-  assert.equal(enforceMinimumLeafTarget(10, 0, 6), 12);
+test('独立成册末级小节目标至少覆盖每个技术分支', () => {
+  assert.equal(enforceMinimumLeafTarget(10, 0, 6), 10);
   assert.equal(enforceMinimumLeafTarget(14, 0, 6), 14);
-  assert.equal(enforceMinimumLeafTarget(10, 2, 5), 12);
+  assert.equal(enforceMinimumLeafTarget(4, 0, 6), 6);
+  assert.equal(enforceMinimumLeafTarget(10, 2, 5), 10);
   assert.equal(enforceMinimumLeafTarget(null, 0, 6), null);
+  assert.equal(enforceMinimumLeafTarget(2, 0, 1, {
+    maximumWords: 4000,
+    sectionWords: 3000,
+    strictSectionWords: true,
+  }), 1);
+  assert.throws(
+    () => enforceMinimumLeafTarget(4, 0, 6, {
+      maximumWords: 4000,
+      sectionWords: 1000,
+      strictSectionWords: true,
+    }),
+    /最多容纳 5 个 AI 生成小节，但独立成册目录至少需要 6 个/,
+  );
 });

@@ -181,57 +181,59 @@ const OUTLINE_REVIEW_SCHEMA = {
   },
 };
 
-const LEAF_ALLOCATION_SCHEMA = {
-  oneOf: [
-    {
-      type: 'object',
-      required: ['mode', 'target_ai_leaf_count', 'fixed_ai_leaf_count', 'allocatable_ai_leaf_count', 'allocations'],
-      additionalProperties: false,
-      properties: {
-        mode: { type: 'string', enum: ['allocated'] },
-        target_ai_leaf_count: { type: 'integer', minimum: 1 },
-        fixed_ai_leaf_count: { type: 'integer', minimum: 0 },
-        allocatable_ai_leaf_count: { type: 'integer', minimum: 1 },
-        allocations: {
-          type: 'array',
-          minItems: 1,
-          items: {
-            type: 'object',
-            required: ['branch_id', 'leaf_count'],
-            additionalProperties: false,
-            properties: {
-              branch_id: { type: 'string', minLength: 1 },
-              leaf_count: { type: 'integer', minimum: 2 },
+function createLeafAllocationSchema(minimumLeafCount = 2) {
+  return {
+    oneOf: [
+      {
+        type: 'object',
+        required: ['mode', 'target_ai_leaf_count', 'fixed_ai_leaf_count', 'allocatable_ai_leaf_count', 'allocations'],
+        additionalProperties: false,
+        properties: {
+          mode: { type: 'string', enum: ['allocated'] },
+          target_ai_leaf_count: { type: 'integer', minimum: 1 },
+          fixed_ai_leaf_count: { type: 'integer', minimum: 0 },
+          allocatable_ai_leaf_count: { type: 'integer', minimum: 1 },
+          allocations: {
+            type: 'array',
+            minItems: 1,
+            items: {
+              type: 'object',
+              required: ['branch_id', 'leaf_count'],
+              additionalProperties: false,
+              properties: {
+                branch_id: { type: 'string', minLength: 1 },
+                leaf_count: { type: 'integer', minimum: minimumLeafCount },
+              },
             },
           },
         },
       },
-    },
-    {
-      type: 'object',
-      required: ['mode', 'target_ai_leaf_count', 'fixed_ai_leaf_count', 'allocatable_ai_leaf_count', 'allocations'],
-      additionalProperties: false,
-      properties: {
-        mode: { type: 'string', enum: ['agent-decides'] },
-        target_ai_leaf_count: { type: 'null' },
-        fixed_ai_leaf_count: { type: 'integer', minimum: 0 },
-        allocatable_ai_leaf_count: { type: 'null' },
-        allocations: {
-          type: 'array',
-          minItems: 1,
-          items: {
-            type: 'object',
-            required: ['branch_id'],
-            additionalProperties: false,
-            properties: {
-              branch_id: { type: 'string', minLength: 1 },
+      {
+        type: 'object',
+        required: ['mode', 'target_ai_leaf_count', 'fixed_ai_leaf_count', 'allocatable_ai_leaf_count', 'allocations'],
+        additionalProperties: false,
+        properties: {
+          mode: { type: 'string', enum: ['agent-decides'] },
+          target_ai_leaf_count: { type: 'null' },
+          fixed_ai_leaf_count: { type: 'integer', minimum: 0 },
+          allocatable_ai_leaf_count: { type: 'null' },
+          allocations: {
+            type: 'array',
+            minItems: 1,
+            items: {
+              type: 'object',
+              required: ['branch_id'],
+              additionalProperties: false,
+              properties: {
+                branch_id: { type: 'string', minLength: 1 },
+              },
             },
           },
         },
       },
-    },
-  ],
-};
+    ],
+  };
+}
 
 function formatProgressTitle(value) {
   const title = String(value || '').replace(/\s+/g, ' ').trim();
@@ -266,9 +268,22 @@ function deriveTargetLeafCount(options) {
   return null;
 }
 
-function enforceMinimumLeafTarget(targetLeafCount, fixedAiLeafCount, technicalBranchCount) {
+// 独立成册时每个技术分支至少保留根节点作为正文叶子；字数允许时再推荐向下展开。
+function enforceMinimumLeafTarget(targetLeafCount, fixedAiLeafCount, technicalBranchCount, wordControlOptions = {}) {
   if (targetLeafCount === null) return null;
-  return Math.max(targetLeafCount, fixedAiLeafCount + technicalBranchCount * 2);
+  const minimumLeafCount = fixedAiLeafCount + technicalBranchCount;
+  const adjustedTarget = Math.max(targetLeafCount, minimumLeafCount);
+  if (wordControlOptions.strictSectionWords && wordControlOptions.maximumWords > 0) {
+    const sectionMinimumWords = Math.ceil(wordControlOptions.sectionWords * 0.8);
+    const maximumLeafCount = Math.floor(wordControlOptions.maximumWords / sectionMinimumWords);
+    if (maximumLeafCount < minimumLeafCount) {
+      throw new Error(
+        `当前严格字数配置最多容纳 ${maximumLeafCount} 个 AI 生成小节，但独立成册目录至少需要 ${minimumLeafCount} 个。请提高全文最大字数、降低单节字数或减少技术评分分支后重新生成目录。`,
+      );
+    }
+    return Math.min(adjustedTarget, maximumLeafCount);
+  }
+  return adjustedTarget;
 }
 
 // 统一目录层级编号，并按父子节点形态整理目录字段。
@@ -520,17 +535,20 @@ ${taskInstruction}
 4. description 是目录说明。
 5. attr 必须从“通用”“商务”“资信”“技术”“其他”中选择。
 ${modeRequirements}
-9. ${OUTLINE_OUTPUT_FILE} 必须是纯 JSON，不包含 Markdown 代码块或解释文字。
-10. 程序已为 ${OUTLINE_OUTPUT_FILE} 预置 Schema。写入后调用 json-validation，只传 {"file_path":"${OUTLINE_OUTPUT_FILE}"}；校验失败后必须先修改文件，再重新校验。`;
+8. ${OUTLINE_OUTPUT_FILE} 必须是纯 JSON，不包含 Markdown 代码块或解释文字。
+9. 程序已为 ${OUTLINE_OUTPUT_FILE} 预置 Schema。写入后调用 json-validation，只传 {"file_path":"${OUTLINE_OUTPUT_FILE}"}；校验失败后必须先修改文件，再重新校验。`;
 }
 
-function createLeafAllocationPrompt() {
+function createLeafAllocationPrompt({ standaloneTechnical = false } = {}) {
+  const allocationInstruction = standaloneTechnical
+    ? '优先为每个目录分配至少 2 个；总目标不足时允许部分目录分配 1 个，表示保留一级目录本身作为叶子且不生成 children。除 1 以外不得分配少于 2 个，禁止形成只有一个子节点的冗余层级。'
+    : '每个目录至少分配 2 个。';
   return `请继续使用当前 Pi Session 已读取的技术评分信息、知识库、原方案和目录规划，为多个技术一级目录分配“AI生成”叶子数量。
 
 要求：
 1. 阅读 ${OUTLINE_OUTPUT_FILE}、${TECHNICAL_SCORE_GROUPS_FILE}、${SCORE_DIRECTORY_PLAN_FILE} 和 ${LEAF_ALLOCATION_CONTEXT_FILE}。
 2. 综合各一级目录负责的评分项数量、评分细项数量、内容复杂度以及已读取的参考资料，合理分配 allocatable_ai_leaf_count。
-3. allocations 必须恰好覆盖 context 中 technical_branches 的全部 branch_id，每个 branch_id 只出现一次，每个目录至少分配 2 个。branch_id 是不会因目录重新编号而变化的内部稳定标识。
+3. allocations 必须恰好覆盖 context 中 technical_branches 的全部 branch_id，每个 branch_id 只出现一次。${allocationInstruction}branch_id 是不会因目录重新编号而变化的内部稳定标识。
 4. 所有 leaf_count 之和必须等于 allocatable_ai_leaf_count。
 5. 将结果写入 ${LEAF_ALLOCATION_FILE}，保留 context 中的 mode、target_ai_leaf_count、fixed_ai_leaf_count 和 allocatable_ai_leaf_count。
 6. 不要修改 ${OUTLINE_OUTPUT_FILE}、${TECHNICAL_SCORE_GROUPS_FILE} 或 ${SCORE_DIRECTORY_PLAN_FILE}。
@@ -579,6 +597,9 @@ function createChildrenPrompt({ hasOriginalPlan, originalOnly, targetLeafCount, 
   const mappingInstruction = standaloneTechnical
     ? '每个 branch 的 score_item_level=1，现有一级根节点本身就是评分项映射节点。不得在根节点下面再次生成同名评分项；只根据 detail_points、招标要求和专业逻辑生成其二级及以下目录。'
     : '每个 branch 的 mappings 必须在该分支的 score_item_level 层级生成对应节点。';
+  const standaloneLeafInstruction = standaloneTechnical
+    ? 'leaf_count=1 表示保留对应一级目录本身作为叶子，不得为其生成 children；leaf_count>=2 时才向下展开。'
+    : '';
   const outlineExample = standaloneTechnical
     ? `{"outline":[{"id":"1","title":"评分大项一","description":"评分大项说明","attr":"技术","branch_id":"B1","children":[{"id":"1.1","title":"响应内容一","description":"具体响应内容","content_mode":"ai-generate"},{"id":"1.2","title":"响应内容二","description":"具体响应内容","content_mode":"ai-generate"}]}]}`
     : `{"outline":[{"id":"1","title":"技术应答表","description":"应答表说明","attr":"技术","content_mode":"point-to-point"},{"id":"2","title":"技术方案","description":"技术方案说明","attr":"技术","branch_id":"B1","children":[{"id":"2.1","title":"评分大项","description":"评分大项说明","children":[{"id":"2.1.1","title":"具体方案一","description":"具体方案说明","content_mode":"ai-generate"},{"id":"2.1.2","title":"具体方案二","description":"具体方案说明","content_mode":"ai-generate"}]},{"id":"2.2","title":"另一评分大项","description":"评分大项说明","content_mode":"ai-generate"}]}]}`;
@@ -594,7 +615,7 @@ function createChildrenPrompt({ hasOriginalPlan, originalOnly, targetLeafCount, 
 7. ${rootInstruction}
 8. 未纳入评分项目录规划的一级目录和分支保持原样，不得增加子目录。
 9. 如果存在参考知识库或原方案，只能用于完善评分项对应节点的下级结构，不得改变评分项映射或引入未经批准的同层级大项。
-10. ${leafInstruction}${LEAF_ALLOCATION_FILE} 中 allocations 使用 branch_id 指向技术分支，不使用可能变化的 root_id。评分项完整对应和目录质量优先于数量目标。
+10. ${leafInstruction}${LEAF_ALLOCATION_FILE} 中 allocations 使用 branch_id 指向技术分支，不使用可能变化的 root_id。${standaloneLeafInstruction}评分项完整对应和目录质量优先于数量目标。
 11. 每个最终叶子节点必须填写 content_mode：技术方案正文为 ai-generate；从招标文件提取后按模板填写为 template-fill；需要在 Word 页码确定后回填为 point-to-point；其他特殊内容为 other，并用 content_mode_note 说明。父节点不得包含 content_mode 或 content_mode_note。
 12. 任意非叶子节点的 children 至少包含两个节点，不要创建只有一个子节点的冗余层级。
 13. 目录层级可变，但最多六级；一级目录包含 attr，子目录不包含 attr。所有 id 必须使用层级点号编号：一级为 1、2，二级为 2.1、2.2，三级为 2.1.1、2.1.2，后续层级依此类推，并与实际父子位置一致。
@@ -667,7 +688,7 @@ async function runOutlineGenerationTaskV2({ aiService, agentService, ordinaryAge
     [OUTLINE_OUTPUT_FILE]: OUTLINE_JSON_SCHEMA,
     [TECHNICAL_SCORE_GROUPS_FILE]: TECHNICAL_SCORE_GROUPS_SCHEMA,
     [SCORE_DIRECTORY_PLAN_FILE]: SCORE_DIRECTORY_PLAN_SCHEMA,
-    [LEAF_ALLOCATION_FILE]: LEAF_ALLOCATION_SCHEMA,
+    [LEAF_ALLOCATION_FILE]: createLeafAllocationSchema(standaloneTechnical ? 1 : 2),
     [OUTLINE_REVIEW_FILE]: OUTLINE_REVIEW_SCHEMA,
   };
 
@@ -1023,9 +1044,10 @@ async function runOutlineGenerationTaskV2({ aiService, agentService, ordinaryAge
             targetLeafCount,
             fixedAiLeafCount,
             technicalBranches.length,
+            wordControlOptions,
           );
           if (requestedLeafTarget !== null && targetLeafCount !== requestedLeafTarget) {
-            publish(`独立成册目录至少需要 ${targetLeafCount} 个 AI 生成小节，已自动校正原目标 ${requestedLeafTarget}`, 50);
+            publish(`已按技术分支结构与严格字数上限将 AI 生成叶子目标从 ${requestedLeafTarget} 调整为 ${targetLeafCount}`, 50);
           }
         }
         allocatedAiLeafCount = targetLeafCount === null ? null : targetLeafCount - fixedAiLeafCount;
@@ -1034,7 +1056,7 @@ async function runOutlineGenerationTaskV2({ aiService, agentService, ordinaryAge
           return {
             stage: 'leaf_allocation',
             message: 'Agent 正在分配 AI 生成小节',
-            prompt: createLeafAllocationPrompt(),
+            prompt: createLeafAllocationPrompt({ standaloneTechnical }),
             files: [{
               path: LEAF_ALLOCATION_CONTEXT_FILE,
               content: JSON.stringify({
