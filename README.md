@@ -218,15 +218,6 @@ npm run dist:mac    # macOS Intel / Apple Silicon DMG 和 ZIP
 └── README.md                  # 中文项目说明
 ```
 
-## 🤝 贡献指南
-
-欢迎各种形式的贡献！
-
-1. **🐛 问题反馈**: 在 [Issues](https://github.com/yibiaoai/yibiao-simple/issues) 中报告bug
-2. **💡 功能建议**: 提出新功能需求和改进建议  
-3. **🔧 代码贡献**: Fork项目，提交Pull Request
-4. **📖 文档完善**: 帮助改进文档和使用说明
-
 ## 🍉 鸣谢
 - 感谢所有用户的支持与信任
 - 特别鸣谢 <a href="https://linux.do/" rel="nofollow">linuxdo</a> 佬友们的支持与鼓励
@@ -305,6 +296,15 @@ npm run dist:mac    # macOS Intel / Apple Silicon DMG 和 ZIP
     </td>
   </tr>
 </table>
+
+### 🤝 贡献指南
+
+欢迎各种形式的贡献！
+
+1. **🐛 问题反馈**: 在 [Issues](https://github.com/yibiaoai/yibiao-simple/issues) 中报告bug
+2. **💡 功能建议**: 提出新功能需求和改进建议  
+3. **🔧 代码贡献**: Fork项目，提交Pull Request
+4. **📖 文档完善**: 帮助改进文档和使用说明
 
 ## 💖 支持项目
 
