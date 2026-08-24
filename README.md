@@ -50,7 +50,6 @@
 
 ## 💌 友情链接
 
-【[佳图文档助手](https://github.com/migrant1124/WPSTD) 】
 【[易标 Web 版 (由第三方提供)](https://github.com/jdcome/OpenBidKit-Yibiao-Web)】
 
 
