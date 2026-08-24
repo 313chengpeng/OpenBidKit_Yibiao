@@ -159,9 +159,9 @@
 
 ## 🧑‍💻 本地开发调试
 
-本仓库根目录没有 `package.json`，桌面客户端代码位于 `client/`，客户端命令均在该目录执行。建议使用与发布环境一致的 Node.js 22；调试 Open XML 功能或本地打包还需要安装 .NET 10 SDK。
+桌面客户端代码位于 `client/`，建议使用 Node.js 22；调试 Open XML 功能或本地打包还需要安装 .NET 10 SDK。
 
-### 启动客户端
+### 安装与启动
 
 ```powershell
 cd client
@@ -169,82 +169,53 @@ npm ci
 npm run dev
 ```
 
-`npm ci` 的 `postinstall` 会为 Electron 重建 `better-sqlite3` 等原生模块。`npm run dev` 会在 `127.0.0.1:5173` 启动 Vite，再打开 Electron。
+Pi Agent SDK 及所需命令工具已随项目提供，无需单独安装。
 
-Pi Agent SDK 随依赖安装，使用的 `rg`、`fd`、`jq` 已按 Windows x64、macOS Intel 和 macOS Apple Silicon 保存在 `client/vendor/agent-tools/`，日常开发和打包无需另行下载。开发态首次使用 Open XML 功能时，客户端会自动构建 `openxmlhelper/` 下的 .NET 10 助手。
-
-### 构建与原生模块检查
+### 构建与打包
 
 ```powershell
 cd client
-npm run build
-npm run smoke:electron-native
+npm run build       # TypeScript 检查与 Vite 构建
+npm run dist:win    # Windows x64 安装包和 ZIP
+npm run dist:mac    # macOS Intel / Apple Silicon DMG 和 ZIP
 ```
 
-`npm run build` 会依次执行 TypeScript 类型检查和 Vite 构建。项目没有统一的 lint 或全量 test 脚本；若出现 `NODE_MODULE_VERSION` 不匹配，先执行 `npm run postinstall`，再运行原生模块检查。
-
-### 本地打包
-
-```powershell
-cd client
-npm run dist:win
-```
-
-```bash
-cd client
-npm run dist:mac
-```
-
-打包命令会先构建客户端并发布自包含的 Open XML 助手，再由 electron-builder 生成安装包。Windows 产物为 x64 NSIS 安装包和 ZIP，macOS 产物为 Intel / Apple Silicon 的 DMG 和 ZIP，统一输出到 `client/release/`。
-
-### 升级内置 Agent 工具
-
-仅在升级 `rg`、`fd`、`jq` 版本时，维护者在 `client/` 目录按目标平台执行：
-
-```powershell
-node scripts/prepare-agent-tools.cjs --platform win32 --arch x64
-node scripts/prepare-agent-tools.cjs --platform darwin --arch x64
-node scripts/prepare-agent-tools.cjs --platform darwin --arch arm64
-```
-
-脚本每次只替换指定平台目录，其他平台资源保持不变；三套资源升级完成后统一提交，发布流程会在对应平台校验并打入安装包。
+打包产物位于 `client/release/`。
 
 ## 🛠️ 技术架构
 
-当前产品主体是 `client/` 下的独立 Electron 桌面客户端，不依赖旧 `frontend/`、`backend/` 结构。
-
-- **进程边界**：Renderer 只通过 Preload 暴露的 `window.yibiao` 调用本地能力；Electron Main 负责文件、配置、SQLite、AI、Agent、后台任务、插件、导出和更新
-- **界面层**：Vite + React + TypeScript，使用全局 CSS、设计变量和 Radix UI 基础组件
-- **业务模块**：技术方案与已有方案扩写、可行性研究报告、导出模板、文档知识库、标书查重、废标项检查、插件、资源和设置
-- **任务与数据**：配置保存在 `userData/user_config.json`，结构化业务状态以 `userData/workspace/yibiao.sqlite` 为权威；耗时任务在 Main 中运行并持续保存检查点，切换页面后仍可恢复
-- **AI 与 Agent**：模型请求统一经过 AI Service 管理并发、重试、取消和 Token 统计；Pi Agent 为每次调用创建独立 Runtime / Session，并使用随包提供的命令工具
-- **文档能力**：支持本地或 MinerU 文档解析；.NET 10 Open XML 助手处理 Word 模板，Mermaid 和 HTML 在本地转图后导出
-- **在线服务**：`analytics/` 下的 Cloudflare Worker 与 Dashboard 承载埋点聚合、公告、资源、插件、模型信息、许可证和 Agent 失败诊断
-- **打包发布**：electron-builder 构建 Windows x64 与 macOS Intel / Apple Silicon 客户端，Agent 工具和自包含 Open XML 助手随安装包分发
+- **桌面端**：Electron Main / Preload 提供本地能力，Renderer 通过 `window.yibiao` 调用
+- **界面层**：Vite + React + TypeScript，使用全局 CSS 和 Radix UI
+- **数据与任务**：配置保存在本地文件，业务状态存入 SQLite；耗时任务在 Main 后台运行并支持恢复
+- **AI 与 Agent**：AI Service 统一管理模型请求，Pi Agent 使用独立 Runtime / Session 执行智能体任务
+- **文档与在线服务**：支持本地或 MinerU 解析、Open XML 和本地图片渲染；Cloudflare Worker 提供公告、资源、插件、模型信息、许可证及统计服务
 
 ### 🏗️ 项目结构
 
 ```
 易标投标工具箱/
-├── client/                    # 当前桌面客户端主体
-│   ├── electron/              # Main、Preload、IPC、本地服务
+├── client/                    # Electron 桌面客户端
+│   ├── electron/              # Main、Preload、IPC 与本地服务
 │   ├── src/                   # Renderer 应用源码
-│   │   ├── app/               # 路由、菜单、Provider
+│   │   ├── app/               # 路由、菜单与全局 Provider
 │   │   ├── components/        # 应用壳层组件
-│   │   ├── features/          # 技术方案、知识库等业务模块
-│   │   └── shared/            # 通用类型、AI、UI、工具函数
+│   │   ├── features/          # 各业务功能模块
+│   │   ├── shared/            # 通用类型、UI 与工具函数
+│   │   └── styles/            # 全局样式与设计变量
 │   ├── scripts/               # 构建、资源准备与校验脚本
 │   ├── vendor/agent-tools/    # 各平台 Pi Agent 命令工具
-│   ├── assets/                # 图标与静态资源
+│   ├── assets/                # 客户端图标与静态资源
 │   └── package.json           # 客户端依赖和打包配置
-├── openxmlhelper/              # .NET 10 Word / Open XML 助手
-├── analytics/                 # Cloudflare Worker API 与 Dashboard
-│   ├── worker/                # 在线 API、聚合任务与存储逻辑
+├── openxmlhelper/             # .NET 10 Word / Open XML 助手
+│   └── src/OpenXmlHelper/     # 助手程序源码
+├── analytics/                 # Cloudflare 在线服务
+│   ├── worker/                # API、聚合任务与存储逻辑
 │   └── dashboard/             # 管理后台
 ├── sql/
 │   └── workspace_schema.sql   # 工作区 SQLite 目标结构
-├── tools/                     # 独立文档解析与 MinerU 验证工具
-└── README.md                  # 项目文档
+├── .github/workflows/         # CI 与客户端发布流程
+├── screenshots/               # README 图片资源
+└── README.md                  # 中文项目说明
 ```
 
 ## 🤝 贡献指南
