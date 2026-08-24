@@ -41,6 +41,7 @@ export type {
   ImageModelConfig,
   ImageModelProvider,
   ImageModelProfiles,
+  ImageModelRatio,
   ImageModelSize,
   ImageModelStatus,
   LegacyTextModelProvider,

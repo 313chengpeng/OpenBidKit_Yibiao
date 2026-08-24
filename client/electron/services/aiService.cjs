@@ -162,6 +162,53 @@ function normalizeOpenAICompatibleImageSize(imageConfig, requestSize) {
   return requested || configured || '1024x1024';
 }
 
+const AGNES_IMAGE_2_0_SIZES = new Set(['1024x768', '1024x1024', '768x1024']);
+const AGNES_IMAGE_2_1_SIZES = new Set(['1K', '2K', '3K', '4K']);
+const AGNES_IMAGE_RATIOS = new Set(['1:1', '3:4', '4:3', '16:9', '9:16', '2:3', '3:2', '21:9']);
+
+// 按服务商协议构造 OpenAI 兼容生图请求。
+function createOpenAICompatibleImageRequestBody(provider, imageConfig, prompt, requestSize) {
+  const requestMode = normalizeImageRequestMode(imageConfig);
+  const model = String(imageConfig?.model_name || '').trim();
+  const size = normalizeOpenAICompatibleImageSize(imageConfig, requestSize);
+
+  if (provider !== 'agnes') {
+    return {
+      model,
+      prompt,
+      size,
+      response_format: 'url',
+      ...(requestMode === 'stream' ? { stream: true } : {}),
+    };
+  }
+
+  if (requestMode === 'stream') {
+    throw new Error('Agnes AI 生图仅支持普通请求，请在设置中将请求方式改为普通请求');
+  }
+  if (size === 'auto') {
+    throw new Error('Agnes AI 生图不支持自动尺寸，请在设置中选择具体图片尺寸');
+  }
+
+  if (model === 'agnes-image-2.0-flash' && !AGNES_IMAGE_2_0_SIZES.has(size)) {
+    throw new Error('Agnes Image 2.0 Flash 仅支持 1024x768、1024x1024 或 768x1024');
+  }
+  if (model === 'agnes-image-2.1-flash' && !AGNES_IMAGE_2_1_SIZES.has(size)) {
+    throw new Error('Agnes Image 2.1 Flash 请使用 1K、2K、3K 或 4K 图片尺寸');
+  }
+
+  const body = {
+    model,
+    prompt,
+    size,
+    extra_body: { response_format: 'url' },
+  };
+  if (model === 'agnes-image-2.1-flash') {
+    const ratio = String(imageConfig?.image_ratio || '1:1').trim();
+    body.ratio = AGNES_IMAGE_RATIOS.has(ratio) ? ratio : '1:1';
+  }
+  return body;
+}
+
 function normalizeGoogleImageSize(imageConfig) {
   const size = String(imageConfig?.image_size || '1K').trim();
   return size || '1K';
@@ -1413,13 +1460,11 @@ async function testOpenAICompatibleImageModel(app, config, provider) {
   const requestMode = normalizeImageRequestMode(imageConfig);
   const requestId = createRequestId();
   const logTitle = `AI生图测试-${meta.label}`;
-  const requestBody = {
-    model: imageConfig.model_name,
-    prompt: '大字报，内容是“易标AI老好了”',
-    size: normalizeOpenAICompatibleImageSize(imageConfig),
-    response_format: 'url',
-    ...(requestMode === 'stream' ? { stream: true } : {}),
-  };
+  const requestBody = createOpenAICompatibleImageRequestBody(
+    provider,
+    imageConfig,
+    '大字报，内容是“易标AI老好了”',
+  );
 
   try {
     writeAiLog(app, config, {
@@ -1612,13 +1657,12 @@ async function generateOpenAICompatibleImage(app, config, request, provider) {
   const requestId = createRequestId();
   const logTitle = resolveAiLogTitle(request, request.title ? `AI生图-${request.title}` : 'AI生图');
   const requestMode = normalizeImageRequestMode(imageConfig);
-  const requestBody = {
-    model: imageConfig.model_name,
-    prompt: normalizeImagePrompt(request),
-    size: normalizeOpenAICompatibleImageSize(imageConfig, request.size),
-    response_format: 'url',
-    ...(requestMode === 'stream' ? { stream: true } : {}),
-  };
+  const requestBody = createOpenAICompatibleImageRequestBody(
+    provider,
+    imageConfig,
+    normalizeImagePrompt(request),
+    request.size,
+  );
   const baseUrl = requireBaseUrl(imageConfig.base_url, `${meta.label} Base URL 缺失，请重新选择服务商后保存配置`);
   let responseData = null;
   let analyticsTracked = false;

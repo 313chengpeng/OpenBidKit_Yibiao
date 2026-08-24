@@ -17,8 +17,9 @@ const MIN_COMPONENT_CONCURRENCY_LIMIT = 1;
 const MAX_COMPONENT_CONCURRENCY_LIMIT = 20;
 const DEFAULT_AGENT_AUTO_ANSWER_ENABLED = false;
 const DEFAULT_HEADING_BORDER_CELL_COLORS = ['#eef5ff', '#f3f7ff', '#f8fbff', '#fbfdff', '#ffffff', '#ffffff'];
-const openAICompatibleImageSizes = ['auto', '1024x1024', '1536x1024', '1024x1536', '2048x2048', '2048x1152', '3840x2160', '2160x3840'];
+const openAICompatibleImageSizes = ['auto', '1K', '2K', '3K', '4K', '1024x768', '1024x1024', '768x1024', '1536x1024', '1024x1536', '2048x2048', '2048x1152', '3840x2160', '2160x3840'];
 const googleImageSizes = ['512', '1K', '2K', '4K'];
+const agnesImageRatios = ['1:1', '3:4', '4:3', '16:9', '9:16', '2:3', '3:2', '21:9'];
 
 const defaultAgentModeScenarios = {
   existing_plan_expansion_original_outline_extraction: true,
@@ -123,7 +124,8 @@ const defaultImageModelProfiles = {
     api_key: '',
     model_name: '',
     image_size: '1024x1024',
-    request_mode: 'stream',
+    image_ratio: '1:1',
+    request_mode: 'normal',
     concurrency_limit: DEFAULT_IMAGE_CONCURRENCY_LIMIT,
     status: 'untested',
     tested_at: '',
@@ -494,6 +496,11 @@ function normalizeImageSize(provider, value, fallback) {
   return provider === 'google-ai-studio' ? '1K' : '1024x1024';
 }
 
+// 归一化 Agnes 2.1 图片宽高比。
+function normalizeImageRatio(value) {
+  return agnesImageRatios.includes(value) ? value : '1:1';
+}
+
 function normalizeImageModelProfile(provider, profile) {
   const defaults = defaultImageModelProfiles[provider];
   const source = profile || {};
@@ -506,6 +513,7 @@ function normalizeImageModelProfile(provider, profile) {
     api_key: source.api_key !== undefined ? source.api_key : defaults.api_key,
     model_name: useProviderDefaultImageModel ? defaults.model_name : source.model_name !== undefined ? source.model_name : defaults.model_name,
     image_size: normalizeImageSize(provider, useProviderDefaultImageModel ? defaults.image_size : source.image_size, defaults.image_size),
+    ...(provider === 'agnes' ? { image_ratio: normalizeImageRatio(source.image_ratio) } : {}),
     request_mode: normalizeAiRequestMode(useProviderDefaultImageModel ? defaults.request_mode : source.request_mode, defaults.request_mode),
     concurrency_limit: normalizeImageConcurrencyLimit(source.concurrency_limit, defaults.concurrency_limit),
     comfyui_workflow: source.comfyui_workflow !== undefined ? String(source.comfyui_workflow) : (defaults.comfyui_workflow || ''),
