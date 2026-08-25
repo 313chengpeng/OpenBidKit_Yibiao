@@ -4,7 +4,7 @@
 -- 1. 本文件用于开源开发者阅读、评审和排查问题，展示 workspace/yibiao.sqlite 的目标完整表结构。
 -- 2. 用户运行客户端时不需要手动执行本文件。
 -- 3. 客户端运行时建表和升级以 Electron Main 侧 migration 代码为准。
--- 4. 当前运行代码已落地 technical_plan_* v1、duplicate_check_* / rejection_check_* v2、knowledge_* v3、technical_plan_global_fact_groups v4、标段兼容 v5/v6、标段选择 v7、旧待选择标段兼容字段 v8、工作流类型和原方案文件状态 v9、招标解析项选择配置 v10、知识库排序 v11、废标项检查多投标文件 v12、已有方案目录配置 v13、多标段优化状态 v14、导出模板库 v15、多招标文件 v16、全文图片编排 v17、目录字数控制 v18、全局事实补全模式 v22、可行性研究报告 v23 目标结构。
+-- 4. 当前运行代码已落地 technical_plan_* v1、duplicate_check_* / rejection_check_* v2、knowledge_* v3、technical_plan_global_fact_groups v4、标段兼容 v5/v6、标段选择 v7、旧待选择标段兼容字段 v8、工作流类型和原方案文件状态 v9、招标解析项选择配置 v10、知识库排序 v11、废标项检查多投标文件 v12、已有方案目录配置 v13、多标段优化状态 v14、导出模板库 v15、多招标文件 v16、全文图片编排 v17、目录字数控制 v18、全局事实补全模式 v22、可行性研究报告 v23、企业图片知识库 v24 目标结构。
 -- 5. 每次表结构调整后，需要同步更新本文件和 runtime migration 版本。
 -- 6. 本文件不保存历史版本，每次更新都写入最新目标完整结构。
 
@@ -633,9 +633,16 @@ ON rejection_check_logic_findings(sort_order);
 -- ============================================================================
 
 -- 知识库文件夹。
+-- type: document（既有文档知识库）/ image（企业图片知识库，v24 起支持）。
+-- enterprise_scope_id: 图片文件夹所属企业作用域（授权 clientId），仅图片类型使用；
+-- 文档文件夹该字段为空，保持既有行为。
+-- 注意：v24 不迁移旧本地图片数据，旧图片记录和文件保持原状。
 CREATE TABLE IF NOT EXISTS knowledge_folders (
   folder_id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
+  type TEXT NOT NULL DEFAULT 'document',
+  parent_id TEXT,
+  enterprise_scope_id TEXT,
   sort_order INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
@@ -643,6 +650,12 @@ CREATE TABLE IF NOT EXISTS knowledge_folders (
 
 CREATE INDEX IF NOT EXISTS idx_knowledge_folders_order
 ON knowledge_folders(sort_order, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_knowledge_folders_type
+ON knowledge_folders(type);
+
+CREATE INDEX IF NOT EXISTS idx_knowledge_folders_scope
+ON knowledge_folders(enterprise_scope_id);
 
 -- 知识库文档元数据和处理状态。
 -- 原始文件和 Markdown 原文仍保存在 knowledge-base/folders/<folderId>/documents/<documentId>/ 下。
@@ -831,6 +844,30 @@ CREATE TABLE IF NOT EXISTS knowledge_match_batches (
 
 CREATE INDEX IF NOT EXISTS idx_knowledge_match_batches_status
 ON knowledge_match_batches(document_id, status, batch_index);
+
+-- 企业图片知识库（v24 目标设计）。
+-- 图片原始文件和缩略图保存在 knowledge-base/image-library/<sha256(enterpriseScopeId)>/ 下，
+-- file_path/thumbnail_path 为相对该 scope 目录的相对路径。
+-- v24 不迁移旧本地图片数据。
+CREATE TABLE IF NOT EXISTS knowledge_images (
+  image_id TEXT PRIMARY KEY,
+  folder_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  tags_json TEXT NOT NULL DEFAULT '[]',
+  file_name TEXT NOT NULL,
+  mime_type TEXT NOT NULL,
+  size INTEGER NOT NULL DEFAULT 0,
+  file_path TEXT NOT NULL,
+  thumbnail_path TEXT NOT NULL,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (folder_id) REFERENCES knowledge_folders(folder_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_knowledge_images_folder_order
+ON knowledge_images(folder_id, sort_order, created_at DESC);
 
 -- ============================================================================
 -- 导出模板 export_templates（v15 目标设计）

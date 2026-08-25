@@ -2,8 +2,8 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const path = require('node:path');
-const { dialog } = require('electron');
-const { getKnowledgeBaseDir } = require('../utils/paths.cjs');
+const { dialog, nativeImage } = require('electron');
+const { getKnowledgeBaseDir, getKnowledgeImageScopeDir } = require('../utils/paths.cjs');
 const { deleteImportedImageBatches } = require('../utils/importedImages.cjs');
 const { enqueueJsonLine, enqueueLogRemoval } = require('../utils/silentFileLog.cjs');
 const { splitUserTextByContextLimit } = require('../utils/userTextSplitter.cjs');
@@ -18,6 +18,77 @@ const KNOWLEDGE_CONTEXT_LIMIT_RATIO = 0.8;
 /** 统一 block 分段时预留给任务说明+条目等 L2 后缀的预算比例（策略 B） */
 const TASK_AND_ITEMS_RESERVE_RATIO = 0.2;
 const PROMPT_CACHE_WARMUP_DELAY_MS = 5000;
+
+// ===== 企业图片知识库（v24）=====
+// 图片大小上限与支持的格式（五种栅格格式 + SVG）
+const KNOWLEDGE_IMAGE_MAX_BYTES = 20 * 1024 * 1024;
+const KNOWLEDGE_IMAGE_EXTENSIONS_BY_MIME = {
+  'image/png': '.png',
+  'image/jpeg': '.jpg',
+  'image/gif': '.gif',
+  'image/webp': '.webp',
+  'image/bmp': '.bmp',
+  'image/svg+xml': '.svg',
+};
+
+/** 通过魔数嗅探栅格图片真实 MIME，无法识别返回 null */
+function detectRasterImageMime(buffer) {
+  if (buffer.length >= 8 && buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47) {
+    return 'image/png';
+  }
+  if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
+    return 'image/jpeg';
+  }
+  const gifHeader = buffer.subarray(0, 6).toString('latin1');
+  if (buffer.length >= 6 && (gifHeader === 'GIF87a' || gifHeader === 'GIF89a')) {
+    return 'image/gif';
+  }
+  if (
+    buffer.length >= 12
+    && buffer.subarray(0, 4).toString('latin1') === 'RIFF'
+    && buffer.subarray(8, 12).toString('latin1') === 'WEBP'
+  ) {
+    return 'image/webp';
+  }
+  if (buffer.length >= 2 && buffer[0] === 0x42 && buffer[1] === 0x4d) {
+    return 'image/bmp';
+  }
+  return null;
+}
+
+/** SVG 是文本格式，通过开头标签嗅探；同时防止把任意文本当作 SVG 入库 */
+function isSvgImageContent(buffer) {
+  const head = buffer.subarray(0, Math.min(buffer.length, 2048)).toString('utf-8').trim();
+  return head.startsWith('<') && /<svg[\s>]/i.test(head);
+}
+
+/**
+ * 校验上传图片负载：大小、声明 MIME 白名单、内容与声明 MIME 一致。
+ * 返回 { buffer, mimeType }，非法负载直接抛错，保证失败时不留任何记录。
+ */
+function validateKnowledgeImagePayload(payload = {}) {
+  const declaredMime = String(payload.mimeType || '').trim().toLowerCase();
+  const normalizedMime = declaredMime === 'image/jpg' ? 'image/jpeg' : declaredMime;
+  if (!Object.prototype.hasOwnProperty.call(KNOWLEDGE_IMAGE_EXTENSIONS_BY_MIME, normalizedMime)) {
+    throw new Error('不支持的图片格式');
+  }
+  const base64 = String(payload.base64 || '').replace(/^data:[^,]*,/, '');
+  const buffer = Buffer.from(base64, 'base64');
+  if (!buffer.length) {
+    throw new Error('图片内容为空');
+  }
+  if (buffer.length > KNOWLEDGE_IMAGE_MAX_BYTES) {
+    throw new Error(`图片大小超过 20MB 限制（当前 ${Math.round(buffer.length / 1024 / 1024)}MB）`);
+  }
+  if (normalizedMime === 'image/svg+xml') {
+    if (!isSvgImageContent(buffer)) {
+      throw new Error('图片格式与内容不符');
+    }
+  } else if (detectRasterImageMime(buffer) !== normalizedMime) {
+    throw new Error('图片格式与内容不符');
+  }
+  return { buffer, mimeType: normalizedMime };
+}
 
 function now() {
   return new Date().toISOString();
@@ -1062,6 +1133,15 @@ function createKnowledgeBaseService({ app, aiService, configStore, knowledgeBase
     }
   }
 
+  // 企业图片知识库作用域：以授权 analytics_client_id 隔离不同企业的图片资产
+  function getEnterpriseScopeId() {
+    try {
+      return String(configStore?.load()?.analytics_client_id || '').trim();
+    } catch {
+      return '';
+    }
+  }
+
   function debugLog(documentId, event, payload = {}) {
     if (!isDeveloperMode()) {
       return;
@@ -2077,19 +2157,51 @@ function createKnowledgeBaseService({ app, aiService, configStore, knowledgeBase
   recoverInterruptedDocuments();
 
   return {
-    list() {
-      return knowledgeBaseStore.list();
+    list(type) {
+      if (type === 'image') {
+        return knowledgeBaseStore.list('image', getEnterpriseScopeId()).folders;
+      }
+      if (type === 'document') {
+        return knowledgeBaseStore.list('document').folders;
+      }
+      if (type) {
+        throw new Error('未知知识库文件夹类型');
+      }
+      // 默认返回文档知识库视图：图片文件夹及其下文档不进入文档列表
+      const index = knowledgeBaseStore.list();
+      const documentFolderIds = new Set(index.folders.filter((folder) => folder.type === 'document').map((folder) => folder.id));
+      return {
+        folders: index.folders.filter((folder) => documentFolderIds.has(folder.id)),
+        documents: index.documents.filter((document) => documentFolderIds.has(document.folder_id)),
+      };
     },
 
-    createFolder(name) {
-      return knowledgeBaseStore.createFolder(name);
+    createFolder(name, type = 'document') {
+      if (type !== 'document' && type !== 'image') {
+        throw new Error('未知知识库文件夹类型');
+      }
+      // 图片文件夹绑定当前企业作用域；未绑定企业时允许建夹，上传图片时再拒绝
+      const scopeId = type === 'image' ? getEnterpriseScopeId() : '';
+      return knowledgeBaseStore.createFolder(name, type, scopeId);
     },
 
     renameFolder(folderId, name) {
+      // 图片文件夹属于企业作用域资产，改名前校验当前授权 scope，防止跨企业篡改
+      const folder = knowledgeBaseStore.list().folders.find((item) => item.id === folderId);
+      if (!folder) throw new Error('知识库文件夹不存在');
+      if (folder.type === 'image' && folder.enterprise_scope_id !== getEnterpriseScopeId()) {
+        throw new Error('图片文件夹不存在或无权访问');
+      }
       return knowledgeBaseStore.renameFolder(folderId, name);
     },
 
     reorderFolder(draggedFolderId, targetFolderId, position) {
+      // 图片文件夹有独立入口管理，不参与文档文件夹拖拽排序
+      const index = knowledgeBaseStore.list();
+      const isImageFolder = (id) => index.folders.some((folder) => folder.id === id && folder.type === 'image');
+      if (isImageFolder(draggedFolderId) || isImageFolder(targetFolderId)) {
+        throw new Error('暂不支持调整图片文件夹顺序');
+      }
       knowledgeBaseStore.reorderFolders(draggedFolderId, targetFolderId, position);
       return { success: true, message: '文件夹排序已保存' };
     },
@@ -2098,6 +2210,27 @@ function createKnowledgeBaseService({ app, aiService, configStore, knowledgeBase
       const index = knowledgeBaseStore.list();
       const folder = index.folders.find((item) => item.id === folderId);
       if (!folder) throw new Error('知识库文件夹不存在');
+
+      // 图片文件夹：属于企业作用域资产，删除前校验当前授权 scope，防止跨企业越权删除
+      if (folder.type === 'image') {
+        const scopeId = getEnterpriseScopeId();
+        if (folder.enterprise_scope_id !== scopeId) {
+          throw new Error('图片文件夹不存在或无权访问');
+        }
+        const images = scopeId ? knowledgeBaseStore.listImages(folderId, scopeId) : [];
+        if (scopeId) {
+          const scopeDir = getKnowledgeImageScopeDir(app, scopeId);
+          for (const image of images) {
+            knowledgeBaseStore.deleteImageRow(image.id, scopeId);
+            const imageDir = normalizeRelativePath(image.file_path).split('/').slice(0, -1).join('/');
+            if (imageDir) {
+              fs.rmSync(path.join(scopeDir, imageDir), { recursive: true, force: true });
+            }
+          }
+        }
+        knowledgeBaseStore.deleteFolder(folderId);
+        return { success: true, message: `已删除文件夹“${folder.name}”及 ${images.length} 张图片` };
+      }
 
       const documentsToDelete = index.documents.filter((document) => document.folder_id === folderId);
       const runningDocument = documentsToDelete.find((document) => activePreparations.has(document.id) || activeMatches.has(document.id));
@@ -2263,6 +2396,126 @@ function createKnowledgeBaseService({ app, aiService, configStore, knowledgeBase
       // batchSize 已忽略，按模型上下文自动分段匹配
       matchDocument(documentId, webContents, { force: document.status === 'success' });
       return { success: true, message: '已开始自动分段匹配段落', document };
+    },
+
+    // ===== 企业图片知识库（v24）=====
+
+    /** 上传图片：校验通过后写文件、落库；落库失败回滚已写文件，避免孤儿文件 */
+    async createImage(folderId, payload = {}) {
+      const scopeId = getEnterpriseScopeId();
+      if (!scopeId) {
+        throw new Error('未绑定企业，无法上传企业图片');
+      }
+      const folder = knowledgeBaseStore.getImageFolderForScope(folderId, scopeId);
+      if (!folder) throw new Error('图片文件夹不存在或无权访问');
+
+      const { buffer, mimeType } = validateKnowledgeImagePayload(payload);
+      const imageId = createId('kbimg');
+      const extension = KNOWLEDGE_IMAGE_EXTENSIONS_BY_MIME[mimeType];
+      const relativeDir = normalizeRelativePath(path.join('images', imageId));
+      const fileRelativePath = `${relativeDir}/source${extension}`;
+      const thumbRelativePath = `${relativeDir}/thumb.jpg`;
+      const scopeDir = getKnowledgeImageScopeDir(app, scopeId);
+      ensureDir(path.join(scopeDir, relativeDir));
+      fs.writeFileSync(path.join(scopeDir, relativeDir, `source${extension}`), buffer);
+
+      // 生成缩略图：nativeImage 不支持 SVG，对 SVG 跳过（浏览器可直接渲染）
+      let thumbnailSaved = false;
+      if (mimeType !== 'image/svg+xml' && typeof nativeImage?.createFromBuffer === 'function') {
+        try {
+          const fullImage = nativeImage.createFromBuffer(buffer);
+          if (!fullImage.isEmpty()) {
+            const thumb = fullImage.resize({ width: 400, quality: 'good' });
+            const thumbBuffer = thumb.toJPEG(72);
+            if (thumbBuffer.length > 0 && thumbBuffer.length < buffer.length) {
+              fs.writeFileSync(path.join(scopeDir, thumbRelativePath), thumbBuffer);
+              thumbnailSaved = true;
+            }
+          }
+        } catch {
+          // 缩略图生成失败不阻断上传，列表回退原图
+        }
+      }
+
+      try {
+        return knowledgeBaseStore.createImageRow({
+          id: imageId,
+          folder_id: folderId,
+          name: payload.name || payload.fileName,
+          description: payload.description,
+          tags: payload.tags,
+          file_name: payload.fileName,
+          mime_type: mimeType,
+          size: buffer.length,
+          file_path: fileRelativePath,
+          thumbnail_path: thumbnailSaved ? thumbRelativePath : '',
+        }, scopeId);
+      } catch (error) {
+        // 落库失败时清理已写入的文件，保持“库记录与文件一致”不变量
+        fs.rmSync(path.join(scopeDir, relativeDir), { recursive: true, force: true });
+        throw error;
+      }
+    },
+
+    listImages(folderId) {
+      const scopeId = getEnterpriseScopeId();
+      if (!scopeId) return [];
+      return knowledgeBaseStore.listImages(folderId, scopeId);
+    },
+
+    getImageFileDataUrl(imageId) {
+      return knowledgeBaseStore.readImageFileAsDataUrl(imageId, getEnterpriseScopeId());
+    },
+
+    getImageThumbnailDataUrl(imageId) {
+      const scopeId = getEnterpriseScopeId();
+      const image = knowledgeBaseStore.getImageRowForScope(imageId, scopeId);
+      // 历史图片无缩略图时，首次访问懒生成（SVG 除外，浏览器可直接缩放渲染）
+      if (!image.thumbnail_path && image.mime_type !== 'image/svg+xml' && typeof nativeImage?.createFromBuffer === 'function') {
+        try {
+          const sourcePath = knowledgeBaseStore.getImageAbsolutePath(imageId, scopeId);
+          if (fs.existsSync(sourcePath)) {
+            const buffer = fs.readFileSync(sourcePath);
+            const fullImage = nativeImage.createFromBuffer(buffer);
+            if (!fullImage.isEmpty()) {
+              const thumb = fullImage.resize({ width: 400, quality: 'good' });
+              const thumbBuffer = thumb.toJPEG(72);
+              if (thumbBuffer.length > 0 && thumbBuffer.length < buffer.length) {
+                const imageDir = path.dirname(sourcePath);
+                const thumbPath = path.join(imageDir, 'thumb.jpg');
+                fs.writeFileSync(thumbPath, thumbBuffer);
+                const relativeThumbPath = `images/${imageId}/thumb.jpg`;
+                knowledgeBaseStore.updateImageThumbnailPath(imageId, relativeThumbPath, scopeId);
+              }
+            }
+          }
+        } catch {
+          // 懒生成失败静默降级到原图
+        }
+      }
+      return knowledgeBaseStore.readImageThumbnailAsDataUrl(imageId, scopeId);
+    },
+
+    /** 解析 kbimg:<imageId> 引用对应的本地绝对路径，供渲染层图片加载使用 */
+    resolveKnowledgeImageUrl(imageId) {
+      return knowledgeBaseStore.getImageAbsolutePath(imageId, getEnterpriseScopeId());
+    },
+
+    updateImage(imageId, patch = {}) {
+      return knowledgeBaseStore.updateImageRow(imageId, patch, getEnterpriseScopeId());
+    },
+
+    /** 删除顺序：先删数据库记录，再删文件；文件删除失败不阻断（残留文件可被后续清理） */
+    deleteImage(imageId) {
+      const scopeId = getEnterpriseScopeId();
+      const image = knowledgeBaseStore.deleteImageRow(imageId, scopeId);
+      if (scopeId) {
+        const imageDir = normalizeRelativePath(image.file_path).split('/').slice(0, -1).join('/');
+        if (imageDir) {
+          fs.rmSync(path.join(getKnowledgeImageScopeDir(app, scopeId), imageDir), { recursive: true, force: true });
+        }
+      }
+      return { success: true, message: `已删除图片“${image.name}”` };
     },
 
     getOutlineReferences(documentIds) {
