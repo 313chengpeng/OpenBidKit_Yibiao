@@ -134,8 +134,7 @@ const bridge = {
   },
   knowledgeBase: {
     list: () => ipcRenderer.invoke('knowledge-base:list'),
-    // type 缺省为 document；图片文件夹请使用 knowledgeImage.createFolder
-    createFolder: (name, type) => ipcRenderer.invoke('knowledge-base:create-folder', name, type),
+    createFolder: (name) => ipcRenderer.invoke('knowledge-base:create-folder', name),
     renameFolder: (folderId, name) => ipcRenderer.invoke('knowledge-base:rename-folder', folderId, name),
     reorderFolder: (draggedFolderId, targetFolderId, position) => ipcRenderer.invoke('knowledge-base:reorder-folder', draggedFolderId, targetFolderId, position),
     deleteFolder: (folderId) => ipcRenderer.invoke('knowledge-base:delete-folder', folderId),
@@ -152,18 +151,6 @@ const bridge = {
       ipcRenderer.on('knowledge-base:event', listener);
       return () => ipcRenderer.removeListener('knowledge-base:event', listener);
     },
-  },
-  knowledgeImage: {
-    listFolders: () => ipcRenderer.invoke('knowledge-image:list-folders'),
-    createFolder: (name) => ipcRenderer.invoke('knowledge-image:create-folder', name),
-    renameFolder: (folderId, name) => ipcRenderer.invoke('knowledge-image:rename-folder', folderId, name),
-    deleteFolder: (folderId) => ipcRenderer.invoke('knowledge-image:delete-folder', folderId),
-    list: (folderId) => ipcRenderer.invoke('knowledge-image:list', folderId),
-    create: (folderId, payload) => ipcRenderer.invoke('knowledge-image:create', folderId, payload),
-    update: (imageId, patch) => ipcRenderer.invoke('knowledge-image:update', imageId, patch),
-    remove: (imageId) => ipcRenderer.invoke('knowledge-image:delete', imageId),
-    getDataUrl: (imageId) => ipcRenderer.invoke('knowledge-image:get-data-url', imageId),
-    getThumbnailUrl: (imageId) => ipcRenderer.invoke('knowledge-image:get-thumbnail-url', imageId),
   },
   technicalPlan: {
     loadState: () => ipcRenderer.invoke('technical-plan:load-state'),

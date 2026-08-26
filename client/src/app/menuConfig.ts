@@ -75,6 +75,7 @@ export const appMenuItems: AppMenuItem[] = [
         label: '图片知识库',
         description: '管理图片素材、图示和视觉参考资料',
         icon: 'file',
+        notice: githubStarNotice,
       },
     ],
   },

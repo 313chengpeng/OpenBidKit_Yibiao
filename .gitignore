@@ -10,7 +10,6 @@ config.json
 uploads/
 *.docx
 *.pdf
-/docs/superpowers
 
 # 构建和打包相关
 dist/
@@ -47,7 +46,6 @@ package-lock.json.backup
 # IDE和编辑器文件（根据需要调整）
 .vscode/settings.json
 .vscode/extensions.json
-.claude/
 # 保留launch.json和tasks.json用于项目配置
 
 # 原有的gitignore内容保持不变

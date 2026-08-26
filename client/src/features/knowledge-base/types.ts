@@ -13,48 +13,6 @@ export interface KnowledgeCandidateItem {
   summary: string;
 }
 
-/** 知识库文件夹类型：document 为既有文档知识库，image 为企业图片知识库 */
-export type KnowledgeFolderType = 'document' | 'image';
-
-export interface KnowledgeImage {
-  id: string;
-  folder_id: string;
-  name: string;
-  description: string;
-  tags: string[];
-  file_name: string;
-  mime_type: string;
-  size: number;
-  thumbnail?: string;
-  sort_order?: number;
-  created_at: string;
-  updated_at: string;
-}
-
-/** 上传企业图片的负载：base64 为纯 base64（兼容 data URL 前缀），MIME 需与内容一致（Main 侧魔数校验） */
-export interface KnowledgeImageUploadPayload {
-  base64: string;
-  mimeType: string;
-  fileName: string;
-  name?: string;
-  description?: string;
-  tags?: string[];
-}
-
-/** 更新企业图片元数据的可修改字段 */
-export interface KnowledgeImagePatch {
-  name?: string;
-  description?: string;
-  tags?: string[];
-  sort_order?: number;
-}
-
-export interface KnowledgeImageMutationResult {
-  success: boolean;
-  message: string;
-  imageId?: string;
-}
-
 export interface KnowledgeDiscardedBlockGroup {
   block_ids: string[];
   reason: string;
@@ -118,9 +76,6 @@ export type KnowledgeDocumentStatus = 'pending' | 'copying' | 'converting' | 'ex
 export interface KnowledgeFolder {
   id: string;
   name: string;
-  /** 文件夹类型，缺省视为 document（既有文档知识库） */
-  type?: KnowledgeFolderType;
-  parent_id?: string | null;
   sort_order?: number;
   created_at: string;
   updated_at: string;

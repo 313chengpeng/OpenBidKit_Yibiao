@@ -1,7 +1,7 @@
 import type { AiHttpErrorPayload, ChatCompletionRequest, JsonCompletionRequest } from './ai';
 import type { DuplicateCheckWorkspacePatch, DuplicateCheckWorkspaceState, FileSelectionResult } from './bid';
 import type { ClientConfig, ConfigSaveResult, ImageModelTestResult, ModelInfoResult, ModelListResult, UpdateChannel } from './config';
-import type { KnowledgeAnalysisSnapshot, KnowledgeBaseEvent, KnowledgeBaseIndex, KnowledgeBaseIndexMutationResult, KnowledgeBaseMutationResult, KnowledgeBaseRetryDocumentResult, KnowledgeBaseStartMatchingResult, KnowledgeBaseUploadResult, KnowledgeDocument, KnowledgeFolder, KnowledgeImage, KnowledgeImageMutationResult, KnowledgeImagePatch, KnowledgeImageUploadPayload, KnowledgeItem } from '../../features/knowledge-base/types';
+import type { KnowledgeAnalysisSnapshot, KnowledgeBaseEvent, KnowledgeBaseIndex, KnowledgeBaseIndexMutationResult, KnowledgeBaseMutationResult, KnowledgeBaseRetryDocumentResult, KnowledgeBaseStartMatchingResult, KnowledgeBaseUploadResult, KnowledgeDocument, KnowledgeFolder, KnowledgeItem } from '../../features/knowledge-base/types';
 import type { RejectionCheckWorkspacePatch, RejectionCheckWorkspaceState, RejectionDocumentRole } from '../../features/rejection-check/types';
 import type { BidAnalysisMode, BidAnalysisTaskState, BidSectionMode, ContentGenerationOptions, ContentGenerationPlanState, ContentGenerationProgressDetail, ContentGenerationRuntimeState, ContentGenerationSectionState, DetectedBidSection, GlobalFactGroupState, GlobalFactsMode, SaveOutlineRequest, SaveOutlineSelectionRequest, TechnicalPlanState, TechnicalPlanStep, TechnicalPlanWorkflowKind } from '../../features/technical-plan/types';
 import type { FeasibilityProjectInfo, FeasibilityReportState, FeasibilityReportStep, FeasibilitySaveOutlineRequest, FeasibilitySourceFile } from '../../features/feasibility-report/types';
@@ -575,7 +575,7 @@ export interface YibiaoBridge {
   };
   knowledgeBase: {
     list: () => Promise<KnowledgeBaseIndex>;
-    createFolder: (name: string, type?: 'document' | 'image') => Promise<KnowledgeFolder>;
+    createFolder: (name: string) => Promise<KnowledgeFolder>;
     renameFolder: (folderId: string, name: string) => Promise<KnowledgeFolder>;
     reorderFolder: (draggedFolderId: string, targetFolderId: string, position: 'before' | 'after') => Promise<KnowledgeBaseIndexMutationResult>;
     deleteFolder: (folderId: string) => Promise<KnowledgeBaseMutationResult>;
@@ -588,19 +588,6 @@ export interface YibiaoBridge {
     readItems: (documentId: string) => Promise<KnowledgeItem[]>;
     readAnalysis: (documentId: string) => Promise<KnowledgeAnalysisSnapshot>;
     onEvent: (callback: (event: KnowledgeBaseEvent) => void) => () => void;
-  };
-  /** 企业图片知识库（v24）：按授权企业作用域隔离，跨企业不可见 */
-  knowledgeImage: {
-    listFolders: () => Promise<KnowledgeFolder[]>;
-    createFolder: (name: string) => Promise<KnowledgeFolder>;
-    renameFolder: (folderId: string, name: string) => Promise<KnowledgeFolder>;
-    deleteFolder: (folderId: string) => Promise<KnowledgeImageMutationResult>;
-    list: (folderId: string) => Promise<KnowledgeImage[]>;
-    create: (folderId: string, payload: KnowledgeImageUploadPayload) => Promise<KnowledgeImage>;
-    update: (imageId: string, patch: KnowledgeImagePatch) => Promise<KnowledgeImage>;
-    remove: (imageId: string) => Promise<KnowledgeImageMutationResult>;
-    getDataUrl: (imageId: string) => Promise<string>;
-    getThumbnailUrl: (imageId: string) => Promise<string>;
   };
   technicalPlan: {
     loadState: () => Promise<TechnicalPlanState>;

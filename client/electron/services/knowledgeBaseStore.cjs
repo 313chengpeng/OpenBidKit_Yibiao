@@ -1,8 +1,7 @@
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
-const { getKnowledgeBaseDir, getKnowledgeImageScopeDir } = require('../utils/paths.cjs');
-const { resolveScopedImagePath } = require('../utils/knowledgeImageReferences.cjs');
+const { getKnowledgeBaseDir } = require('../utils/paths.cjs');
 
 const documentStatuses = ['pending', 'copying', 'converting', 'extracting', 'ready_for_matching', 'matching', 'recovering', 'analyzing', 'saving', 'success', 'error'];
 const documentStepKeys = ['copy_source', 'convert_markdown', 'build_blocks', 'extract_first_items', 'extract_supplement_items', 'merge_candidates', 'match_batches', 'recover_missing', 'save_result'];
@@ -147,29 +146,6 @@ function createKnowledgeBaseStore({ app, db }) {
     return {
       id: row.folder_id,
       name: row.name,
-      // 旧数据无 type 列值时按 document 处理（v24 迁移已补默认值，此处兜底）
-      type: row.type === 'image' ? 'image' : 'document',
-      parent_id: row.parent_id || null,
-      enterprise_scope_id: row.enterprise_scope_id || null,
-      sort_order: Number(row.sort_order || 0),
-      created_at: row.created_at,
-      updated_at: row.updated_at,
-    };
-  }
-
-  function imageFromRow(row) {
-    if (!row) return null;
-    return {
-      id: row.image_id,
-      folder_id: row.folder_id,
-      name: row.name,
-      description: row.description || '',
-      tags: safeJsonParse(row.tags_json, []),
-      file_name: row.file_name,
-      mime_type: row.mime_type,
-      size: Number(row.size || 0),
-      file_path: row.file_path,
-      thumbnail_path: row.thumbnail_path || '',
       sort_order: Number(row.sort_order || 0),
       created_at: row.created_at,
       updated_at: row.updated_at,
@@ -178,21 +154,15 @@ function createKnowledgeBaseStore({ app, db }) {
 
   function insertOrUpdateFolder(folder) {
     db.prepare(`
-      INSERT INTO knowledge_folders (folder_id, name, type, parent_id, enterprise_scope_id, sort_order, created_at, updated_at)
-      VALUES (@folder_id, @name, @type, @parent_id, @enterprise_scope_id, @sort_order, @created_at, @updated_at)
+      INSERT INTO knowledge_folders (folder_id, name, sort_order, created_at, updated_at)
+      VALUES (@folder_id, @name, @sort_order, @created_at, @updated_at)
       ON CONFLICT(folder_id) DO UPDATE SET
         name = excluded.name,
-        type = excluded.type,
-        parent_id = excluded.parent_id,
-        enterprise_scope_id = excluded.enterprise_scope_id,
         sort_order = excluded.sort_order,
         updated_at = excluded.updated_at
     `).run({
       folder_id: folder.id,
       name: safeName(folder.name),
-      type: folder.type === 'image' ? 'image' : 'document',
-      parent_id: folder.parent_id ? String(folder.parent_id) : null,
-      enterprise_scope_id: folder.enterprise_scope_id ? String(folder.enterprise_scope_id) : null,
       sort_order: Number(folder.sort_order || 0),
       created_at: folder.created_at || now(),
       updated_at: folder.updated_at || now(),
@@ -272,23 +242,14 @@ function createKnowledgeBaseStore({ app, db }) {
     return documentFromRow(values);
   }
 
-  // type 为空时返回全部文件夹（含图片文件夹），供管理场景使用；
-  // type = 'image' 时按企业作用域过滤，避免跨企业泄露图片文件夹。
-  function list(type = null, scopeId = null) {
-    let folders = db.prepare('SELECT * FROM knowledge_folders ORDER BY sort_order ASC, created_at ASC').all().map(folderFromRow);
-    if (type === 'image') {
-      folders = folders.filter((folder) => folder.type === 'image' && folder.enterprise_scope_id === scopeId);
-    } else if (type === 'document') {
-      folders = folders.filter((folder) => folder.type === 'document');
-    }
-    const documents = type === 'image'
-      ? []
-      : db.prepare(`
-        SELECT d.*
-        FROM knowledge_documents d
-        LEFT JOIN knowledge_folders f ON f.folder_id = d.folder_id
-        ORDER BY COALESCE(f.sort_order, 0) ASC, d.folder_id ASC, d.sort_order ASC, d.created_at DESC, d.document_id ASC
-      `).all().map(documentFromRow);
+  function list() {
+    const folders = db.prepare('SELECT * FROM knowledge_folders ORDER BY sort_order ASC, created_at ASC').all().map(folderFromRow);
+    const documents = db.prepare(`
+      SELECT d.*
+      FROM knowledge_documents d
+      LEFT JOIN knowledge_folders f ON f.folder_id = d.folder_id
+      ORDER BY COALESCE(f.sort_order, 0) ASC, d.folder_id ASC, d.sort_order ASC, d.created_at DESC, d.document_id ASC
+    `).all().map(documentFromRow);
     return { folders, documents };
   }
 
@@ -342,19 +303,10 @@ function createKnowledgeBaseStore({ app, db }) {
     return documentFromRow(row);
   }
 
-  function createFolder(name, type = 'document', enterpriseScopeId = '') {
+  function createFolder(name) {
     const timestamp = now();
     const maxOrder = db.prepare('SELECT COALESCE(MAX(sort_order), -1) AS value FROM knowledge_folders').get()?.value ?? -1;
-    const folder = {
-      id: createId('folder'),
-      name: safeName(name),
-      type: type === 'image' ? 'image' : 'document',
-      parent_id: null,
-      enterprise_scope_id: enterpriseScopeId ? String(enterpriseScopeId) : null,
-      sort_order: Number(maxOrder) + 1,
-      created_at: timestamp,
-      updated_at: timestamp,
-    };
+    const folder = { id: createId('folder'), name: safeName(name), sort_order: Number(maxOrder) + 1, created_at: timestamp, updated_at: timestamp };
     insertOrUpdateFolder(folder);
     return folder;
   }
@@ -371,8 +323,6 @@ function createKnowledgeBaseStore({ app, db }) {
   function deleteFolder(folderId) {
     const folder = db.prepare('SELECT * FROM knowledge_folders WHERE folder_id = ?').get(folderId);
     if (!folder) throw new Error('知识库文件夹不存在');
-    // better-sqlite3 默认不启用外键级联，删除文件夹时显式清理图片记录，避免孤儿行
-    db.prepare('DELETE FROM knowledge_images WHERE folder_id = ?').run(folderId);
     db.prepare('DELETE FROM knowledge_folders WHERE folder_id = ?').run(folderId);
     return folderFromRow(folder);
   }
@@ -1152,141 +1102,6 @@ function createKnowledgeBaseStore({ app, db }) {
     return { items };
   }
 
-  // ===== 企业图片知识库（v24）=====
-  // 所有读写都按 enterpriseScopeId 做作用域校验，Service 层只负责传入当前授权 scope。
-
-  const imageScopeJoin = `
-    SELECT i.*
-    FROM knowledge_images i
-    JOIN knowledge_folders f ON f.folder_id = i.folder_id
-  `;
-
-  function getImageFolderForScope(folderId, scopeId) {
-    if (!scopeId) return null;
-    const folder = db.prepare('SELECT * FROM knowledge_folders WHERE folder_id = ?').get(folderId);
-    if (!folder || (folder.type || 'document') !== 'image' || folder.enterprise_scope_id !== scopeId) {
-      return null;
-    }
-    return folderFromRow(folder);
-  }
-
-  function getImageRowForScope(imageId, scopeId) {
-    const row = db.prepare(`
-      ${imageScopeJoin}
-      WHERE i.image_id = ? AND f.type = 'image' AND f.enterprise_scope_id = ?
-    `).get(imageId, scopeId);
-    if (!row) throw new Error('图片不存在或无权访问');
-    return imageFromRow(row);
-  }
-
-  function listImages(folderId, scopeId) {
-    if (!scopeId) return [];
-    return db.prepare(`
-      ${imageScopeJoin}
-      WHERE i.folder_id = ? AND f.type = 'image' AND f.enterprise_scope_id = ?
-      ORDER BY i.sort_order ASC, i.created_at DESC, i.image_id ASC
-    `).all(folderId, scopeId).map(imageFromRow);
-  }
-
-  function getImageAbsolutePath(imageId, scopeId) {
-    const image = getImageRowForScope(imageId, scopeId);
-    const scopeDir = getKnowledgeImageScopeDir(app, scopeId);
-    const resolved = resolveScopedImagePath(normalizeRelativePath(image.file_path), scopeDir);
-    if (!resolved) throw new Error('图片文件路径不合法');
-    return resolved;
-  }
-
-  function readImageFileAsDataUrl(imageId, scopeId) {
-    const image = getImageRowForScope(imageId, scopeId);
-    const filePath = getImageAbsolutePath(imageId, scopeId);
-    if (!fs.existsSync(filePath)) throw new Error('图片文件不存在或无权访问');
-    return `data:${image.mime_type};base64,${fs.readFileSync(filePath).toString('base64')}`;
-  }
-
-  /** 读取缩略图文件为 data URL；若缩略图不存在则回退到原图 */
-  function readImageThumbnailAsDataUrl(imageId, scopeId) {
-    const image = getImageRowForScope(imageId, scopeId);
-    const scopeDir = getKnowledgeImageScopeDir(app, scopeId);
-    if (image.thumbnail_path) {
-      const thumbResolved = resolveScopedImagePath(normalizeRelativePath(image.thumbnail_path), scopeDir);
-      if (thumbResolved && fs.existsSync(thumbResolved)) {
-        return `data:image/jpeg;base64,${fs.readFileSync(thumbResolved).toString('base64')}`;
-      }
-    }
-    // 缩略图缺失时回退原图（兼容历史数据）
-    return readImageFileAsDataUrl(imageId, scopeId);
-  }
-
-  /** 更新缩略图相对路径（首次访问历史图片时懒生成后调用） */
-  function updateImageThumbnailPath(imageId, thumbnailPath, scopeId) {
-    getImageRowForScope(imageId, scopeId);
-    db.prepare('UPDATE knowledge_images SET thumbnail_path = ?, updated_at = ? WHERE image_id = ?')
-      .run(normalizeRelativePath(thumbnailPath), now(), imageId);
-  }
-
-  function getNextImageSortOrder(folderId) {
-    return Number(db.prepare('SELECT COALESCE(MAX(sort_order), -1) AS value FROM knowledge_images WHERE folder_id = ?').get(folderId)?.value ?? -1) + 1;
-  }
-
-  function createImageRow(record = {}, scopeId) {
-    const folder = getImageFolderForScope(record.folder_id, scopeId);
-    if (!folder) throw new Error('图片文件夹不存在或无权访问');
-    const timestamp = now();
-    const values = {
-      image_id: String(record.id || createId('kbimg')),
-      folder_id: folder.id,
-      name: safeName(record.name),
-      description: String(record.description || ''),
-      tags_json: JSON.stringify(Array.isArray(record.tags) ? record.tags.map((tag) => String(tag)) : []),
-      file_name: safeName(record.file_name),
-      mime_type: String(record.mime_type || ''),
-      size: Number(record.size || 0),
-      file_path: normalizeRelativePath(record.file_path),
-      thumbnail_path: normalizeRelativePath(record.thumbnail_path || ''),
-      sort_order: hasOwn(record, 'sort_order') ? Number(record.sort_order || 0) : getNextImageSortOrder(folder.id),
-      created_at: timestamp,
-      updated_at: timestamp,
-    };
-    db.prepare(`
-      INSERT INTO knowledge_images (
-        image_id, folder_id, name, description, tags_json, file_name, mime_type, size,
-        file_path, thumbnail_path, sort_order, created_at, updated_at
-      ) VALUES (
-        @image_id, @folder_id, @name, @description, @tags_json, @file_name, @mime_type, @size,
-        @file_path, @thumbnail_path, @sort_order, @created_at, @updated_at
-      )
-    `).run(values);
-    return imageFromRow(values);
-  }
-
-  function updateImageRow(imageId, patch = {}, scopeId) {
-    const image = getImageRowForScope(imageId, scopeId);
-    const values = {
-      image_id: image.id,
-      name: hasOwn(patch, 'name') ? safeName(patch.name) : image.name,
-      description: hasOwn(patch, 'description') ? String(patch.description || '') : image.description,
-      tags_json: hasOwn(patch, 'tags')
-        ? JSON.stringify(Array.isArray(patch.tags) ? patch.tags.map((tag) => String(tag)) : [])
-        : JSON.stringify(image.tags),
-      sort_order: hasOwn(patch, 'sort_order') ? Number(patch.sort_order || 0) : image.sort_order,
-      updated_at: now(),
-    };
-    const row = db.prepare(`
-      UPDATE knowledge_images
-      SET name = @name, description = @description, tags_json = @tags_json, sort_order = @sort_order, updated_at = @updated_at
-      WHERE image_id = @image_id
-      RETURNING *
-    `).get(values);
-    return imageFromRow(row);
-  }
-
-  // 只删除数据库记录并返回被删图片（含文件路径），文件清理由 Service 层在记录删除后执行
-  function deleteImageRow(imageId, scopeId) {
-    const image = getImageRowForScope(imageId, scopeId);
-    db.prepare('DELETE FROM knowledge_images WHERE image_id = ?').run(imageId);
-    return image;
-  }
-
   ensureBaseDir();
 
   return {
@@ -1320,16 +1135,6 @@ function createKnowledgeBaseStore({ app, db }) {
     readItems,
     readAnalysis,
     getOutlineReferences,
-    getImageFolderForScope,
-    getImageRowForScope,
-    listImages,
-    getImageAbsolutePath,
-    readImageFileAsDataUrl,
-    readImageThumbnailAsDataUrl,
-    updateImageThumbnailPath,
-    createImageRow,
-    updateImageRow,
-    deleteImageRow,
     resolvePath,
   };
 }
