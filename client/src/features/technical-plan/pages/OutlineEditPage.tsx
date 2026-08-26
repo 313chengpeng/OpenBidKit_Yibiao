@@ -24,7 +24,14 @@ interface OutlineEditPageProps {
   task?: BackgroundTaskState;
   contentTaskStatus?: BackgroundTaskState['status'];
   aiAdjustmentRunning?: boolean;
-  onOutlineConfigChange: (config: { referenceKnowledgeDocumentIds: string[]; outlineMode: OutlineMode; outlineExpansionMode: OutlineExpansionMode; wordControlOptions: OutlineWordControlOptions }) => Promise<void>;
+  onOutlineConfigChange: (config: {
+    referenceKnowledgeDocumentIds: string[];
+    referenceKnowledgeSnippetIds?: string[];
+    referenceKnowledgeItemIds?: string[];
+    outlineMode: OutlineMode;
+    outlineExpansionMode: OutlineExpansionMode;
+    wordControlOptions: OutlineWordControlOptions;
+  }) => Promise<void>;
   onOutlineSaved: (request: SaveOutlineRequest) => Promise<void>;
   onOutlineSelectionSaved: (request: SaveOutlineSelectionRequest) => Promise<void>;
   onOpenBidTemplate?: () => Promise<void>;
@@ -365,6 +372,9 @@ function OutlineEditPage({
   const [draftOutlineMode, setDraftOutlineMode] = useState<OutlineMode>(outlineMode === 'standalone-technical' ? 'standalone-technical' : 'response-file');
   const [draftOutlineExpansionMode, setDraftOutlineExpansionMode] = useState<OutlineExpansionMode>(outlineExpansionMode);
   const [draftKnowledgeDocumentIds, setDraftKnowledgeDocumentIds] = useState<string[]>(referenceKnowledgeDocumentIds);
+  // 知识库片段/条目引用功能尚未交付 UI，暂以空数组占位，避免引用未声明变量导致构建失败
+  const [draftKnowledgeSnippetIds] = useState<string[]>([]);
+  const [draftKnowledgeItemIds] = useState<string[]>([]);
   const [draftMinimumWords, setDraftMinimumWords] = useState(formatWordCountDraft(outlineWordControlOptions.minimumWords));
   const [draftMaximumWords, setDraftMaximumWords] = useState(formatWordCountDraft(outlineWordControlOptions.maximumWords));
   const [draftSectionWords, setDraftSectionWords] = useState(formatWordCountDraft(outlineWordControlOptions.sectionWords));
@@ -626,12 +636,22 @@ function OutlineEditPage({
         wordControlOptions,
       });
       setGenerationDialogOpen(false);
-      await window.yibiao?.tasks.startOutlineGeneration({
-        reference_knowledge_document_ids: draftKnowledgeDocumentIds,
-        outline_mode: nextOutlineMode,
-        outline_expansion_mode: nextOutlineExpansionMode,
-        word_control_options: wordControlOptions,
-      });
+      if (isBusiness) {
+        await window.yibiao?.tasks.startBusinessOutlineGeneration({
+          reference_knowledge_document_ids: draftKnowledgeDocumentIds,
+          reference_knowledge_snippet_ids: draftKnowledgeSnippetIds,
+          reference_knowledge_item_ids: draftKnowledgeItemIds,
+        });
+      } else {
+        await window.yibiao?.tasks.startOutlineGeneration({
+          reference_knowledge_document_ids: draftKnowledgeDocumentIds,
+          outline_mode: nextOutlineMode,
+          reference_knowledge_snippet_ids: draftKnowledgeSnippetIds,
+          reference_knowledge_item_ids: draftKnowledgeItemIds,
+          outline_expansion_mode: nextOutlineExpansionMode,
+          word_control_options: wordControlOptions,
+        });
+      }
       trackConfigUsage({
         outline_mode: isExpansionWorkflow ? nextOutlineExpansionMode : nextOutlineMode,
         word_control_enabled: wordControlOptions.minimumWords > 0 || wordControlOptions.maximumWords > 0 || wordControlOptions.sectionWords > 0,

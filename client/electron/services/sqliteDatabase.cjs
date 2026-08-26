@@ -3,7 +3,7 @@ const path = require('node:path');
 const Database = require('better-sqlite3');
 const { getWorkspaceDatabasePath } = require('../utils/paths.cjs');
 
-const schemaVersion = 23;
+const schemaVersion = 24;
 
 function createInitialSchema(db) {
   db.exec(`
@@ -968,6 +968,43 @@ function createKnowledgeBaseSchema(db) {
   `);
 }
 
+// v24：企业图片知识库表结构。
+// 仅为既有 knowledge_folders 补充类型/层级/企业作用域字段并创建 knowledge_images 表，
+// 不迁移、不删除任何旧图片数据（旧本地图片数据本次不迁移）。
+function addKnowledgeImageLibrarySchema(db) {
+  addColumnIfMissing(db, 'knowledge_folders', 'type', "TEXT NOT NULL DEFAULT 'document'");
+  addColumnIfMissing(db, 'knowledge_folders', 'parent_id', 'TEXT');
+  addColumnIfMissing(db, 'knowledge_folders', 'enterprise_scope_id', 'TEXT');
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_knowledge_folders_type
+    ON knowledge_folders(type);
+
+    CREATE INDEX IF NOT EXISTS idx_knowledge_folders_scope
+    ON knowledge_folders(enterprise_scope_id);
+
+    CREATE TABLE IF NOT EXISTS knowledge_images (
+      image_id TEXT PRIMARY KEY,
+      folder_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      tags_json TEXT NOT NULL DEFAULT '[]',
+      file_name TEXT NOT NULL,
+      mime_type TEXT NOT NULL,
+      size INTEGER NOT NULL DEFAULT 0,
+      file_path TEXT NOT NULL,
+      thumbnail_path TEXT NOT NULL,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (folder_id) REFERENCES knowledge_folders(folder_id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_knowledge_images_folder_order
+    ON knowledge_images(folder_id, sort_order, created_at DESC);
+  `);
+}
+
 function createExportTemplatesSchema(db) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS export_templates (
@@ -1118,6 +1155,11 @@ const schemaHealthTableGroups = [
     version: 23,
     tables: ['feasibility_report_meta', 'feasibility_report_tasks', 'feasibility_report_outline_nodes'],
     repair: createFeasibilityReportSchema,
+  },
+  {
+    version: 24,
+    tables: ['knowledge_images'],
+    repair: addKnowledgeImageLibrarySchema,
   },
 ];
 
@@ -1279,6 +1321,15 @@ const schemaHealthColumnGroups = [
     columns: {
       content_mode: 'TEXT',
       content_mode_note: 'TEXT',
+    },
+  },
+  {
+    version: 24,
+    table: 'knowledge_folders',
+    columns: {
+      type: "TEXT NOT NULL DEFAULT 'document'",
+      parent_id: 'TEXT',
+      enterprise_scope_id: 'TEXT',
     },
   },
 ];
@@ -1459,6 +1510,11 @@ const migrations = [
     version: 23,
     description: '新增可行性研究报告工作区表结构',
     up: createFeasibilityReportSchema,
+  },
+  {
+    version: 24,
+    description: '新增企业图片知识库表结构',
+    up: addKnowledgeImageLibrarySchema,
   },
 ];
 

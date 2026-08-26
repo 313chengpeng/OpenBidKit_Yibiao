@@ -1,4 +1,5 @@
 const path = require('node:path');
+const crypto = require('node:crypto');
 
 function getUserDataPath(app) {
   return app.getPath('userData');
@@ -109,6 +110,18 @@ function getKnowledgeBaseDir(app) {
   return path.join(getWorkspaceDir(app), 'knowledge-base');
 }
 
+// 企业图片库根目录：<workspace>/knowledge-base/image-library
+function getKnowledgeImageLibraryDir(app) {
+  return path.join(getKnowledgeBaseDir(app), 'image-library');
+}
+
+// 按企业作用域 hash 隔离图片资产：<image-library>/<sha256(enterpriseScopeId)>。
+// enterpriseScopeId 只能是 Main 侧生成的授权 clientId，不拼接用户输入。
+function getKnowledgeImageScopeDir(app, enterpriseScopeId) {
+  const scopeHash = crypto.createHash('sha256').update(String(enterpriseScopeId)).digest('hex');
+  return path.join(getKnowledgeImageLibraryDir(app), scopeHash);
+}
+
 function getAiLogsDir(app) {
   return path.join(getUserDataPath(app), 'logs', 'ai');
 }
@@ -199,6 +212,8 @@ module.exports = {
   getGeneratedImagesDir,
   getImportedImagesDir,
   getKnowledgeBaseDir,
+  getKnowledgeImageLibraryDir,
+  getKnowledgeImageScopeDir,
   getLicenseFilePath,
   getOpenXmlHelperDebugExecutablePath,
   getOpenXmlHelperProjectPath,
