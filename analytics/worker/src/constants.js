@@ -1,11 +1,11 @@
 export const RAW_DATASET = 'agnet_analytics';
-// 2026-08-26 的自动化测试误写入生产埋点，仅在查询时排除该日两个测试出口 IP。
+// 2026-08-26 至 27 日的异常流量误写入生产埋点，仅在查询时排除对应日期和出口 IP。
 export const DATASET = `(
   SELECT *
   FROM ${RAW_DATASET}
   WHERE NOT (
     blob13 IN ('124.193.61.30', '64.118.148.223')
-    AND formatDateTime(timestamp, '%Y-%m-%d', 'Asia/Shanghai') = '2026-08-26'
+    AND formatDateTime(timestamp, '%Y-%m-%d', 'Asia/Shanghai') IN ('2026-08-26', '2026-08-27')
   )
 )`;
 export const ALLOWED_EVENTS = new Set(['app_open', 'page_view', 'config_usage', 'ai_request', 'resource_click', 'agent_runtime']);
@@ -14,6 +14,7 @@ export const AGENT_RUNTIME_MAX_RETRY_COUNT = 3;
 export const AGENT_RUNTIME_KIND_PATTERN = /^[a-z0-9][a-z0-9._-]{0,39}$/;
 export const PROJECT_NAME_PATTERN = /^[a-zA-Z0-9._-]{1,80}$/;
 export const NOTICE_KEY_PREFIX = 'project_notice:';
+export const IP_BLOCK_LIST_KEY = 'security:ip-block-list:v1';
 export const LICENSE_CONFIG_KEY_PREFIX = 'project_license_config:';
 export const NOTICE_TITLE_MAX_LENGTH = 120;
 export const NOTICE_CONTENT_MAX_LENGTH = 20000;
