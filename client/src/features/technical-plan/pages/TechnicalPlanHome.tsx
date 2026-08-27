@@ -342,6 +342,7 @@ function TechnicalPlanHome({ workflowKind, registerLeaveGuard, onSectionChange }
   const [switchingWorkflow, setSwitchingWorkflow] = useState(false);
   const [petInstallDialogOpen, setPetInstallDialogOpen] = useState(false);
   const [installingPetPlugin, setInstallingPetPlugin] = useState(false);
+  const [globalFactsFocusRequest, setGlobalFactsFocusRequest] = useState<{ groupId: string } | null>(null);
   const sortGuardRef = useRef<OutlineSortGuard | null>(null);
   const sortLeaveResolverRef = useRef<((allowed: boolean) => void) | null>(null);
   const outlineWordControlLeaveResolverRef = useRef<((allowed: boolean) => void) | null>(null);
@@ -359,7 +360,8 @@ function TechnicalPlanHome({ workflowKind, registerLeaveGuard, onSectionChange }
     || (state.bidSectionExtractionStatus === 'success' && !isBidSectionExtractionRunning && selectedBidSectionValid);
   const bidAnalysisReady = requiredBidAnalysisReady && !isBidAnalysisTaskRunning && bidSectionReady;
   const globalFactsReady = state.globalFacts.length > 0 && state.globalFactsTask?.status === 'success';
-  const globalFactsHasPlaceholder = state.globalFacts.some((group) => `${group.title || ''}${group.content || ''}`.includes('【待填写】'));
+  const firstGlobalFactWithPlaceholder = state.globalFacts.find((group) => `${group.title || ''}${group.content || ''}`.includes('【待填写】'));
+  const globalFactsHasPlaceholder = Boolean(firstGlobalFactWithPlaceholder);
   const isGlobalFactsAdjusting = state.globalFactsAdjustmentTask?.status === 'running' || state.globalFactsAdjustmentTask?.status === 'pausing';
   const contentTaskStatus = state.contentGenerationTask?.status;
   const isContentGenerating = contentTaskStatus === 'running' || contentTaskStatus === 'pausing';
@@ -377,7 +379,7 @@ function TechnicalPlanHome({ workflowKind, registerLeaveGuard, onSectionChange }
     || (state.step === 'document-analysis' && (!state.tenderFile || (requiresOriginalPlan && !state.originalPlanFile)))
     || (state.step === 'bid-analysis' && !bidAnalysisReady)
     || (state.step === 'outline-generation' && (!state.outlineData || !state.outlineWordControlSnapshot))
-    || (state.step === 'global-facts' && (!globalFactsReady || globalFactsHasPlaceholder || isGlobalFactsAdjusting));
+    || (state.step === 'global-facts' && (!globalFactsReady || isGlobalFactsAdjusting));
   const nextTooltip = state.step === 'document-analysis' && !state.tenderFile
       ? '上传完招标文件后才能进入下一步'
       : state.step === 'document-analysis' && requiresOriginalPlan && !state.originalPlanFile
@@ -625,6 +627,11 @@ function TechnicalPlanHome({ workflowKind, registerLeaveGuard, onSectionChange }
 
   const switchStep = async (step: TechnicalPlanStep) => {
     if (step === state.step) {
+      return;
+    }
+    if (state.step === 'global-facts' && step === 'content-edit' && firstGlobalFactWithPlaceholder) {
+      setGlobalFactsFocusRequest({ groupId: firstGlobalFactWithPlaceholder.id });
+      showToast('存在待填写，请您改为真实数据后再继续', 'info');
       return;
     }
     const allowed = await confirmPendingSortLeave();
@@ -1362,6 +1369,7 @@ function TechnicalPlanHome({ workflowKind, registerLeaveGuard, onSectionChange }
           globalFactsMode={state.globalFactsMode || 'fabricate'}
           task={state.globalFactsTask}
           aiAdjustmentRunning={isGlobalFactsAdjusting}
+          focusGroupRequest={globalFactsFocusRequest}
           onGlobalFactsSaved={saveGlobalFacts}
           onGlobalFactsConfigChange={saveGlobalFactsConfig}
         />
