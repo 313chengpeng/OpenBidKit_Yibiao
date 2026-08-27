@@ -1,4 +1,13 @@
-export const DATASET = 'agnet_analytics';
+export const RAW_DATASET = 'agnet_analytics';
+// 2026-08-26 的自动化测试误写入生产埋点，仅在查询时排除该日两个测试出口 IP。
+export const DATASET = `(
+  SELECT *
+  FROM ${RAW_DATASET}
+  WHERE NOT (
+    blob13 IN ('124.193.61.30', '64.118.148.223')
+    AND formatDateTime(timestamp, '%Y-%m-%d', 'Asia/Shanghai') = '2026-08-26'
+  )
+)`;
 export const ALLOWED_EVENTS = new Set(['app_open', 'page_view', 'config_usage', 'ai_request', 'resource_click', 'agent_runtime']);
 export const AGENT_RUNTIME_STATUSES = new Set(['success', 'failed']);
 export const AGENT_RUNTIME_MAX_RETRY_COUNT = 3;
