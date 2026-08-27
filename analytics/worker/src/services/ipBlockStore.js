@@ -10,7 +10,11 @@ function normalizeEntries(value) {
     const ip = normalizeIpAddress(item?.ip);
     if (!ip || seen.has(ip)) continue;
     seen.add(ip);
-    entries.push({ ip, createdAt: normalizeText(item?.createdAt, 40) });
+    entries.push({
+      ip,
+      reason: normalizeText(item?.reason, 500),
+      createdAt: normalizeText(item?.createdAt, 40),
+    });
   }
   return entries;
 }
@@ -23,14 +27,18 @@ export async function listBlockedIps(env) {
 }
 
 // 添加一个精确 IPv4 或 IPv6 地址。
-export async function addBlockedIp(env, value) {
+export async function addBlockedIp(env, value, reasonValue) {
   if (!env.NOTICE_STORE) throw new Error('NOTICE_STORE is not configured');
   const ip = normalizeIpAddress(value);
   if (!ip) throw new Error('invalid ip');
   const entries = await listBlockedIps(env);
   const existing = entries.find((item) => item.ip === ip);
   if (existing) return existing;
-  const entry = { ip, createdAt: formatNoticeTime() };
+  const entry = {
+    ip,
+    reason: normalizeText(reasonValue, 500),
+    createdAt: formatNoticeTime(),
+  };
   await env.NOTICE_STORE.put(IP_BLOCK_LIST_KEY, JSON.stringify([...entries, entry]));
   return entry;
 }

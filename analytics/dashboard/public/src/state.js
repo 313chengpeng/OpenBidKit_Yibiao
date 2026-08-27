@@ -89,6 +89,7 @@ export const state = {
   latestPageInfo: $('latestPageInfo'),
   loadIpBlocksButton: $('loadIpBlocksButton'),
   ipBlockInput: $('ipBlockInput'),
+  ipBlockReason: $('ipBlockReason'),
   addIpBlockButton: $('addIpBlockButton'),
   ipBlockStatus: $('ipBlockStatus'),
   ipBlockTable: $('ipBlockTable'),

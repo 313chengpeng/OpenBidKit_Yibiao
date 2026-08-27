@@ -17,13 +17,14 @@ function renderIpBlocks(items) {
   const rows = items.map((item) => `
     <tr>
       <td><strong>${escapeHtml(item.ip)}</strong></td>
+      <td>${escapeHtml(item.reason || '未填写')}</td>
       <td>${escapeHtml(item.createdAt || '-')}</td>
       <td><button type="button" class="danger-button" data-ip-block-delete="${escapeHtml(item.ip)}">解除封禁</button></td>
     </tr>
   `).join('');
   state.ipBlockTable.innerHTML = `
     <table>
-      <thead><tr><th>IP 地址</th><th>封禁时间</th><th>操作</th></tr></thead>
+      <thead><tr><th>IP 地址</th><th>封禁原因</th><th>封禁时间</th><th>操作</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
   `;
@@ -43,12 +44,14 @@ export function setupIpBlocksPage() {
   state.loadIpBlocksButton.addEventListener('click', () => loadIpBlocks().catch((error) => setIpBlockStatus(error?.message || String(error), 'error')));
   state.addIpBlockButton.addEventListener('click', async () => {
     const ip = state.ipBlockInput.value.trim();
+    const reason = state.ipBlockReason.value.trim();
     if (!ip) return setIpBlockStatus('请输入 IP 地址。', 'error');
     try {
       assertAdminToken();
       saveSettings();
-      await requestJson('/api/ip-blocks', { method: 'POST', body: { ip } });
+      await requestJson('/api/ip-blocks', { method: 'POST', body: { ip, reason } });
       state.ipBlockInput.value = '';
+      state.ipBlockReason.value = '';
       await loadIpBlocks();
       setIpBlockStatus(`已封禁 ${ip}。`, 'ok');
     } catch (error) {

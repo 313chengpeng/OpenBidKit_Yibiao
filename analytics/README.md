@@ -31,7 +31,7 @@
 | `GET /health` | Worker | 无 | 健康检查 |
 | `POST /track` | AE + D1 | 无 | 写 AE；从 Cloudflare 真实客户端 IP 请求头记录客户端 IP；新客户端按 `client_created_at` 窗口实时入库，授权字段按快照覆盖既有 `stats_clients` |
 | `GET /ip-blocks` | KV + Worker | 无 | 返回全局封禁 IP 列表和 Cloudflare 观测到的请求公网出口 IP，供客户端启动后静默检查 |
-| `GET/POST/DELETE /api/ip-blocks` | KV | `ADMIN_TOKEN` | 读取、添加或删除全局精确 IPv4/IPv6 封禁记录 |
+| `GET/POST/DELETE /api/ip-blocks` | KV | `ADMIN_TOKEN` | 读取、添加或删除全局精确 IPv4/IPv6 封禁记录；原因可选，封禁时间由 Worker 自动生成 |
 | `GET/POST /agent-errors` | D1 + R2 | GET 无；POST 有效可信 license | GET 供客户端预检开关、版本和容量；POST 仅在预检条件仍满足时保存 gzip Agent 失败诊断包 |
 | `GET /api/projects` | D1 优先，AE 兜底 | `ADMIN_TOKEN` | 项目列表 |
 | `GET /api/overview` | D1 + AE + KV | `ADMIN_TOKEN` | 概览总数、文本 Token、生图次数、新增、今日活跃、每日统计 |

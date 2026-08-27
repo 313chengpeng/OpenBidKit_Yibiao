@@ -27,7 +27,7 @@ export async function handleAdminIpBlocks(request, env, url) {
     let body;
     try { body = await request.json(); } catch { return json({ code: 400, message: 'invalid json body' }, { status: 400 }); }
     try {
-      return json({ code: 0, blockedIp: await addBlockedIp(env, body.ip) });
+      return json({ code: 0, blockedIp: await addBlockedIp(env, body.ip, body.reason) });
     } catch (error) {
       return json({ code: 400, message: error?.message || 'save failed' }, { status: 400 });
     }
