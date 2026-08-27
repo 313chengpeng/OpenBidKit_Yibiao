@@ -1,6 +1,4 @@
 export type TextModelProvider = 'jinlong' | 'volcengine' | 'deepseek' | 'agnes' | 'custom';
-export type LegacyTextModelProvider = 'longcat';
-export type ConfiguredTextModelProvider = TextModelProvider | LegacyTextModelProvider;
 export type AiRequestMode = 'normal' | 'stream';
 export type UpdateChannel = 'github' | 'cloudflare' | 'atomgit';
 
@@ -16,10 +14,10 @@ export interface TextModelConfig {
   request_mode: AiRequestMode;
 }
 
-export type TextModelProfiles = Record<TextModelProvider, TextModelConfig> & Partial<Record<LegacyTextModelProvider, TextModelConfig>>;
+export type TextModelProfiles = Record<TextModelProvider, TextModelConfig>;
 
 export interface AiConfig extends TextModelConfig {
-  text_model_provider: ConfiguredTextModelProvider;
+  text_model_provider: TextModelProvider;
   text_model_profiles: TextModelProfiles;
 }
 

@@ -4,7 +4,6 @@ const { getConfigFilePath } = require('../utils/paths.cjs');
 const { createAnalyticsClientId } = require('../utils/machineIdentity.cjs');
 
 const textModelProviders = ['jinlong', 'volcengine', 'deepseek', 'agnes', 'custom'];
-const legacyTextModelProviders = ['longcat'];
 const imageModelProviders = ['jinlong', 'volcengine', 'google-ai-studio', 'agnes', 'custom', 'comfyui'];
 const aiRequestModes = ['normal', 'stream'];
 const updateChannels = ['github', 'cloudflare', 'atomgit'];
@@ -81,20 +80,6 @@ const defaultTextModelProfiles = {
   custom: {
     api_key: '',
     base_url: '',
-    model_name: '',
-    reasoning_effort: '',
-    context_length_limit: DEFAULT_TEXT_CONTEXT_LENGTH_LIMIT,
-    concurrency_limit: DEFAULT_TEXT_CONCURRENCY_LIMIT,
-    temperature_enabled: false,
-    temperature: DEFAULT_TEXT_TEMPERATURE,
-    request_mode: 'stream',
-  },
-};
-
-const legacyTextModelProfiles = {
-  longcat: {
-    api_key: '',
-    base_url: 'https://api.longcat.chat/openai/v1',
     model_name: '',
     reasoning_effort: '',
     context_length_limit: DEFAULT_TEXT_CONTEXT_LENGTH_LIMIT,
@@ -310,10 +295,6 @@ function isTextModelProvider(value) {
   return textModelProviders.includes(value);
 }
 
-function isLegacyTextModelProvider(value) {
-  return legacyTextModelProviders.includes(value);
-}
-
 function isImageModelProvider(value) {
   return imageModelProviders.includes(value);
 }
@@ -388,7 +369,7 @@ function normalizeComponentsConfig(source) {
 }
 
 function normalizeTextModelProfile(provider, profile) {
-  const defaults = defaultTextModelProfiles[provider] || legacyTextModelProfiles[provider];
+  const defaults = defaultTextModelProfiles[provider];
   const source = profile || {};
   const sourceBaseUrl = provider === 'custom'
     ? source.base_url !== undefined ? source.base_url : defaults.base_url
@@ -413,11 +394,6 @@ function normalizeTextModelProfiles(sourceProfiles) {
       provider,
       sourceProfiles && typeof sourceProfiles === 'object' ? sourceProfiles[provider] : null,
     );
-  });
-  legacyTextModelProviders.forEach((provider) => {
-    if (sourceProfiles && typeof sourceProfiles === 'object' && sourceProfiles[provider]) {
-      profiles[provider] = normalizeTextModelProfile(provider, sourceProfiles[provider]);
-    }
   });
   return profiles;
 }
@@ -696,15 +672,13 @@ function normalizeConfig(config) {
   const source = config || {};
   const hasTextProvider = Object.prototype.hasOwnProperty.call(source, 'text_model_provider');
   const rawTextProvider = typeof source.text_model_provider === 'string' ? source.text_model_provider : '';
-  const sourceTextProvider = isTextModelProvider(rawTextProvider) || isLegacyTextModelProvider(rawTextProvider)
-    ? rawTextProvider
-    : '';
-  const textModelProvider = sourceTextProvider || (hasTextProvider || config ? 'custom' : defaultConfig.text_model_provider);
+  const sourceTextProvider = isTextModelProvider(rawTextProvider) ? rawTextProvider : '';
+  const textModelProvider = sourceTextProvider
+    || (hasTextProvider ? defaultConfig.text_model_provider : config ? 'custom' : defaultConfig.text_model_provider);
   const textModelProfiles = normalizeTextModelProfiles(source.text_model_profiles);
   if (sourceTextProvider) {
     const fallbackProfile = textModelProfiles[textModelProvider]
-      || defaultTextModelProfiles[textModelProvider]
-      || legacyTextModelProfiles[textModelProvider];
+      || defaultTextModelProfiles[textModelProvider];
     textModelProfiles[textModelProvider] = textProfileFromFlatConfig(source, fallbackProfile, textModelProvider);
   } else if (textModelProvider === 'custom' && !hasTextModelProfileData(textModelProfiles.custom)) {
     textModelProfiles.custom = textProfileFromUnknownProvider(source, rawTextProvider, textModelProfiles.custom);
