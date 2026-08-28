@@ -1,4 +1,14 @@
-export type { AiHttpErrorPayload, ChatCompletionRequest, ChatMessage, JsonCompletionRequest } from './ai';
+export type {
+  AiHttpErrorPayload,
+  ChatCompletionRequest,
+  ChatContentPart,
+  ChatImageDetail,
+  ChatImageUrlContentPart,
+  ChatLocalImageContentPart,
+  ChatMessage,
+  ChatTextContentPart,
+  JsonCompletionRequest,
+} from './ai';
 export type {
   DuplicateAnalysisTabId,
   DuplicateAnalysisStatus,

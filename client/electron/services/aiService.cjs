@@ -1,6 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const { nativeImage } = require('electron');
 const { getGeneratedImagesDir } = require('../utils/paths.cjs');
 const { createDeveloperLogger } = require('../utils/developerLog.cjs');
 const { createAiRequestQueue } = require('../utils/aiRequestQueue.cjs');
@@ -25,6 +26,8 @@ const textTokenStatsStore = require('./textTokenStatsStore.cjs');
 const { normalizeTokenUsage } = textTokenStatsStore;
 
 const AI_REQUEST_TIMEOUT_MS = 600000;
+const MULTIMODAL_IMAGE_MAX_EDGE = 2048;
+const MULTIMODAL_IMAGE_JPEG_QUALITY = 85;
 
 // 金龙中转站废弃模型映射：使用这些模型时自动切换到替代模型
 const JINLONG_DEPRECATED_MODEL_MAP = {
@@ -150,6 +153,67 @@ function normalizeRequestTimeoutMs(request) {
 
 function normalizeTextRequestMode(config) {
   return config?.request_mode === 'normal' ? 'normal' : 'stream';
+}
+
+// 读取本地图片，按原比例缩小最长边并编码为 JPEG Base64 Data URL。
+async function compressLocalImageToDataUrl(filePath) {
+  const normalizedPath = String(filePath || '').trim();
+  if (!normalizedPath) {
+    throw new Error('本地图片路径不能为空');
+  }
+
+  try {
+    const sourceBuffer = await fs.promises.readFile(normalizedPath);
+    const sourceImage = nativeImage.createFromBuffer(sourceBuffer);
+    if (sourceImage.isEmpty()) {
+      throw new Error('图片格式不受支持或文件已损坏');
+    }
+
+    const { width, height } = sourceImage.getSize();
+    const maxEdge = Math.max(width, height);
+    const image = maxEdge > MULTIMODAL_IMAGE_MAX_EDGE
+      ? sourceImage.resize(width >= height
+        ? { width: MULTIMODAL_IMAGE_MAX_EDGE, quality: 'best' }
+        : { height: MULTIMODAL_IMAGE_MAX_EDGE, quality: 'best' })
+      : sourceImage;
+    const compressedBuffer = image.toJPEG(MULTIMODAL_IMAGE_JPEG_QUALITY);
+    if (!compressedBuffer.length) {
+      throw new Error('图片压缩结果为空');
+    }
+
+    return `data:image/jpeg;base64,${compressedBuffer.toString('base64')}`;
+  } catch (error) {
+    throw new Error(`图片读取或压缩失败（${path.basename(normalizedPath)}）：${error.message}`);
+  }
+}
+
+// 将消息中的本地图片内容块串行转换为 OpenAI Chat Completions 图片内容块。
+async function prepareMultimodalMessages(messages) {
+  const preparedMessages = [];
+  for (const message of messages) {
+    if (!Array.isArray(message.content)) {
+      preparedMessages.push(message);
+      continue;
+    }
+
+    const content = [];
+    for (const part of message.content) {
+      if (part?.type !== 'local_image') {
+        content.push(part);
+        continue;
+      }
+
+      content.push({
+        type: 'image_url',
+        image_url: {
+          url: await compressLocalImageToDataUrl(part.path),
+          ...(part.detail ? { detail: part.detail } : {}),
+        },
+      });
+    }
+    preparedMessages.push({ ...message, content });
+  }
+  return preparedMessages;
 }
 
 function normalizeImageRequestMode(imageConfig) {
@@ -735,6 +799,7 @@ async function parseOrRepairJsonResponseWithConfig(app, config, request, content
 }
 
 async function collectJsonResponseWithConfig(app, config, request) {
+  const preparedMessages = await prepareMultimodalMessages(request.messages);
   const maxRetries = request.max_retries ?? 2;
   const totalAttempts = maxRetries + 1;
   const responseFormat = request.response_format || { type: 'json_object' };
@@ -745,7 +810,7 @@ async function collectJsonResponseWithConfig(app, config, request) {
 
   for (let attempt = 0; attempt < totalAttempts; attempt += 1) {
     const content = await chatWithConfig(app, config, {
-      messages: request.messages,
+      messages: preparedMessages,
       response_format: responseFormat,
       timeout_ms: request.timeout_ms,
       timeout_message: request.timeout_message,
@@ -1283,10 +1348,14 @@ async function chatWithConfig(app, config, request) {
 
   requireBaseUrl(config.base_url, '请先在设置中配置文本模型 Base URL');
 
+  const preparedRequest = {
+    ...request,
+    messages: await prepareMultimodalMessages(request.messages),
+  };
   const requestId = createRequestId();
   const logTitle = resolveAiLogTitle(request, '文本请求');
   const requestMode = normalizeTextRequestMode(config);
-  let requestBody = createChatRequestBody(config, request, { stream: requestMode === 'stream' });
+  let requestBody = createChatRequestBody(config, preparedRequest, { stream: requestMode === 'stream' });
   let responseData = null;
   let errorMessage = '';
   let analyticsTracked = false;
@@ -1308,11 +1377,11 @@ async function chatWithConfig(app, config, request) {
       try {
         return await requestTextAi(app, config, requestBody, { signal, requestMode });
       } catch (error) {
-        if (!request.response_format || !error.responseFormatUnsupported) {
+        if (!preparedRequest.response_format || !error.responseFormatUnsupported) {
           throw error;
         }
 
-        requestBody = createChatRequestBody(config, request, { omitResponseFormat: true, stream: requestMode === 'stream' });
+        requestBody = createChatRequestBody(config, preparedRequest, { omitResponseFormat: true, stream: requestMode === 'stream' });
         return requestTextAi(app, config, requestBody, { signal, requestMode });
       }
     }, timeoutMs, request.signal));
